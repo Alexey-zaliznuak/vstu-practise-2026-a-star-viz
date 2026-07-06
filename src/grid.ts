@@ -217,10 +217,20 @@ export class GridEditor {
 
     // Ограничиваем зону поиска рамкой вокруг старта/финиша,
     // иначе на бесконечном поле без пути алгоритм не завершится.
-    const minX = Math.min(start.x, end.x) - SEARCH_PADDING;
-    const maxX = Math.max(start.x, end.x) + SEARCH_PADDING;
-    const minY = Math.min(start.y, end.y) - SEARCH_PADDING;
-    const maxY = Math.max(start.y, end.y) + SEARCH_PADDING;
+    // min wall pos
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    // ok
+    for (const wall of [...this.walls, key(start.x, start.y), key(end.x, end.y)]) {
+      const [x, y] = wall.split(",").map(Number);
+      minX = Math.min(minX, x) - SEARCH_PADDING;
+      maxX = Math.max(maxX, x) + SEARCH_PADDING;
+      minY = Math.min(minY, y) - SEARCH_PADDING;
+      maxY = Math.max(maxY, y) + SEARCH_PADDING;
+    }
 
     // g — стоимость пути от старта; h — манхэттенская эвристика до финиша.
     const dist = new Map<string, number>();
@@ -249,13 +259,18 @@ export class GridEditor {
     // Один шаг алгоритма (обработка одной вершины). Возвращает false, когда пора остановиться.
     const step = (): boolean => {
       const current = heap.pop();
+
       if (!current) {
         this.searchFinished = true;
         this.searchRunning = false;
+        console.log("searchFinished, reason - no heap items");
         return false;
       }
+
       const ck = current.key;
+
       if (this.searchClosed.has(ck)) return true; // устаревшая запись из кучи
+
       this.searchOpen.delete(ck);
       this.searchClosed.add(ck);
 
