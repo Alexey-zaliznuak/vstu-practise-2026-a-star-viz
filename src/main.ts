@@ -62,6 +62,7 @@ app.innerHTML = /* html */ `
     <section class="card">
       <h2>Действия</h2>
       <div class="btn-col">
+        <button class="btn tonal" id="btn-maze">Сгенерировать лабиринт</button>
         <button class="btn tonal" id="btn-random">Случайная карта</button>
         <button class="btn tonal" id="btn-reset-view">Центрировать поле</button>
         <button class="btn text" id="btn-export">Экспорт карты (JSON)</button>
@@ -162,6 +163,10 @@ document
 document
   .querySelector<HTMLButtonElement>("#btn-clear-search")!
   .addEventListener("click", () => editor.clearSearch());
+
+document
+  .querySelector<HTMLButtonElement>("#btn-maze")!
+  .addEventListener("click", () => editor.generateMaze());
 
 document
   .querySelector<HTMLButtonElement>("#btn-random")!

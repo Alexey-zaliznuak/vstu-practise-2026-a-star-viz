@@ -368,6 +368,118 @@ export class GridEditor {
     this.emitStats();
   }
 
+  /**
+   * Генерирует полноценный проходимый лабиринт (recursive backtracker).
+   * Гарантированно связный: между стартом и финишем всегда есть путь.
+   * @param cols число «комнат» по горизонтали
+   * @param rows число «комнат» по вертикали
+   * @param braid доля «сломанных» тупиков (0 — идеальный лабиринт, >0 — с петлями)
+   */
+  generateMaze(cols = 30, rows = 30, braid = 0.12) {
+    this.clearSearch(false);
+    this.walls.clear();
+    this.start = null;
+    this.end = null;
+
+    // Полная сетка в мировых клетках: проходы на нечётных индексах,
+    // между ними — клетки-стены. Итоговый размер (2*cols+1) x (2*rows+1).
+    const W = 2 * cols + 1;
+    const H = 2 * rows + 1;
+    const baseX = -Math.floor(W / 2);
+    const baseY = -Math.floor(H / 2);
+
+    // open[gx][gy] === true → клетка является проходом
+    const open: boolean[][] = Array.from({ length: W }, () =>
+      new Array<boolean>(H).fill(false)
+    );
+
+    const visited: boolean[][] = Array.from({ length: cols }, () =>
+      new Array<boolean>(rows).fill(false)
+    );
+
+    // мировые координаты клетки-прохода (i, j)
+    const cellGX = (i: number) => 2 * i + 1;
+    const cellGY = (j: number) => 2 * j + 1;
+
+    const stack: [number, number][] = [[0, 0]];
+    visited[0][0] = true;
+    open[cellGX(0)][cellGY(0)] = true;
+
+    const dirs: [number, number][] = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ];
+
+    while (stack.length) {
+      const [ci, cj] = stack[stack.length - 1];
+
+      // непосещённые соседи-комнаты
+      const options: [number, number][] = [];
+      for (const [dx, dy] of dirs) {
+        const ni = ci + dx;
+        const nj = cj + dy;
+        if (ni >= 0 && ni < cols && nj >= 0 && nj < rows && !visited[ni][nj]) {
+          options.push([ni, nj]);
+        }
+      }
+
+      if (options.length === 0) {
+        stack.pop();
+        continue;
+      }
+
+      const [ni, nj] = options[Math.floor(Math.random() * options.length)];
+      visited[ni][nj] = true;
+      open[cellGX(ni)][cellGY(nj)] = true;
+      // пробиваем стену между текущей и выбранной комнатой
+      open[(cellGX(ci) + cellGX(ni)) / 2][(cellGY(cj) + cellGY(nj)) / 2] = true;
+      stack.push([ni, nj]);
+    }
+
+    // Брейдинг: убираем часть тупиков, добавляя петли (несколько путей).
+    if (braid > 0) {
+      for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+          if (Math.random() >= braid) continue;
+          const gx = cellGX(i);
+          const gy = cellGY(j);
+          // считаем открытые проходы у комнаты
+          let openWalls = 0;
+          const closed: [number, number][] = [];
+          for (const [dx, dy] of dirs) {
+            const wx = gx + dx;
+            const wy = gy + dy;
+            if (wx <= 0 || wx >= W - 1 || wy <= 0 || wy >= H - 1) continue;
+            if (open[wx][wy]) openWalls++;
+            else closed.push([wx, wy]);
+          }
+          // тупик (один выход) → пробиваем случайную стену
+          if (openWalls <= 1 && closed.length > 0) {
+            const [wx, wy] = closed[Math.floor(Math.random() * closed.length)];
+            open[wx][wy] = true;
+          }
+        }
+      }
+    }
+
+    // Формируем стены: всё, что в прямоугольнике и не является проходом.
+    for (let gx = 0; gx < W; gx++) {
+      for (let gy = 0; gy < H; gy++) {
+        if (!open[gx][gy]) this.walls.add(key(baseX + gx, baseY + gy));
+      }
+    }
+
+    // Старт и финиш — в противоположных углах лабиринта.
+    this.start = { x: baseX + cellGX(0), y: baseY + cellGY(0) };
+    this.end = { x: baseX + cellGX(cols - 1), y: baseY + cellGY(rows - 1) };
+
+    this.fitToBounds(baseX, baseY, baseX + W - 1, baseY + H - 1);
+    this.render();
+    this.emitStats();
+  }
+
   /** Подгоняет масштаб и смещение так, чтобы прямоугольник клеток целиком поместился по центру. */
   private fitToBounds(
     minX: number,
