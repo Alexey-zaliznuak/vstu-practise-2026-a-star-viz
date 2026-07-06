@@ -375,7 +375,7 @@ export class GridEditor {
    * @param rows число «комнат» по вертикали
    * @param braid доля «сломанных» тупиков (0 — идеальный лабиринт, >0 — с петлями)
    */
-  generateMaze(cols = 100, rows = 100, braid = 0.12) {
+  generateMaze(cols = 80, rows = 80, braid = 0.12) {
     this.clearSearch(false);
     this.walls.clear();
     this.start = null;
