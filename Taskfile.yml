@@ -1,0 +1,41 @@
+version: "3"
+
+vars:
+  PORT: "5173"
+
+tasks:
+  default:
+    desc: Список доступных команд
+    cmds:
+      - task --list
+
+  install:
+    desc: Установить зависимости фронтенда
+    cmds:
+      - npm install
+
+  dev:
+    desc: Запустить дев-сервер Vite (hot reload)
+    deps: [install]
+    cmds:
+      - npm run dev -- --port {{.PORT}} --open
+
+  build:
+    desc: Собрать прод-версию в dist/
+    deps: [install]
+    cmds:
+      - npm run build
+
+  preview:
+    desc: Локально посмотреть прод-сборку
+    deps: [build]
+    cmds:
+      - npm run preview -- --port {{.PORT}} --open
+
+  clean:
+    desc: Удалить артефакты сборки и node_modules
+    cmds:
+      - cmd: powershell -NoProfile -Command "Remove-Item -Recurse -Force dist, node_modules -ErrorAction SilentlyContinue"
+        platforms: [windows]
+      - cmd: rm -rf dist node_modules
+        platforms: [linux, darwin]

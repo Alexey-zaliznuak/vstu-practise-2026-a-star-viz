@@ -1,0 +1,307 @@
+:root {
+  /* Material-ish палитра */
+  --primary: #6750a4;
+  --primary-hover: #5a4691;
+  --primary-container: #eaddff;
+  --on-primary: #ffffff;
+
+  --surface: #ffffff;
+  --bg: #f4f1fa;
+  --outline: #e3dcef;
+  --text: #1c1b1f;
+  --text-muted: #6b6774;
+
+  --cell-start: #2196f3; /* синий */
+  --cell-end: #f44336; /* красный */
+  --cell-wall: #212121; /* чёрный */
+
+  --radius: 18px;
+  --radius-sm: 12px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 8px 24px rgba(103, 80, 164, 0.08);
+  --shadow-lift: 0 6px 20px rgba(103, 80, 164, 0.22);
+
+  font-family: "Roboto", system-ui, -apple-system, Segoe UI, sans-serif;
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* ---------- Левая панель ---------- */
+.sidebar {
+  width: 26%;
+  min-width: 300px;
+  max-width: 420px;
+  height: 100%;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 4px 0;
+}
+
+.brand .logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--primary), #9a86d6);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 22px;
+  box-shadow: var(--shadow-lift);
+}
+
+.brand h1 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.1;
+}
+
+.brand p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 18px;
+  box-shadow: var(--shadow);
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Легенда / статистика */
+.stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  font-size: 14px;
+  border-bottom: 1px solid var(--outline);
+}
+.stat-row:last-child {
+  border-bottom: none;
+}
+.stat-row .label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+}
+.stat-row .value {
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+.dot.start {
+  background: var(--cell-start);
+}
+.dot.end {
+  background: var(--cell-end);
+}
+.dot.wall {
+  background: var(--cell-wall);
+}
+.dot.open {
+  background: #26c6da;
+}
+.dot.closed {
+  background: #ce93d8;
+}
+.dot.path {
+  background: #ffd600;
+}
+
+/* Кнопки */
+.btn {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 12px 18px;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.05s;
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn.primary {
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow);
+}
+.btn.primary:hover {
+  background: var(--primary-hover);
+}
+.btn.tonal {
+  background: var(--primary-container);
+  color: var(--primary);
+}
+.btn.tonal:hover {
+  background: #e0d0fb;
+}
+.btn.text {
+  background: transparent;
+  color: var(--primary);
+  padding: 10px 12px;
+}
+.btn.text:hover {
+  background: var(--primary-container);
+}
+
+.btn-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.hint {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.hint kbd {
+  background: var(--primary-container);
+  color: var(--primary);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+}
+
+/* ---------- Игровое поле ---------- */
+.board {
+  position: relative;
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+  background: #fbfaff;
+}
+
+#grid {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+.board.pan-mode #grid {
+  cursor: grab;
+}
+.board.panning #grid {
+  cursor: grabbing;
+}
+
+/* Светофор-палитра (правый верхний угол поля) */
+.palette {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  background: var(--surface);
+  border-radius: 22px;
+  box-shadow: var(--shadow-lift);
+  z-index: 5;
+}
+
+.swatch {
+  --c: #fff;
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  border: 2px solid rgba(0, 0, 0, 0.08);
+  background: var(--c);
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.swatch:hover {
+  transform: scale(1.06);
+}
+.swatch.active {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-container);
+}
+.swatch.active::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+  border-radius: 18px;
+  border: 2px solid var(--primary);
+  opacity: 0.35;
+}
+.swatch[data-tool="erase"] {
+  background-image: linear-gradient(
+      45deg,
+      #eee 25%,
+      transparent 25%,
+      transparent 75%,
+      #eee 75%
+    ),
+    linear-gradient(45deg, #eee 25%, #fff 25%, #fff 75%, #eee 75%);
+  background-size: 14px 14px;
+  background-position: 0 0, 7px 7px;
+}
+
+/* Плавающая подсказка координат */
+.coords {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  background: rgba(28, 27, 31, 0.82);
+  color: #fff;
+  font-size: 12.5px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-variant-numeric: tabular-nums;
+  z-index: 5;
+  pointer-events: none;
+}
