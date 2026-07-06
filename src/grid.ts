@@ -76,6 +76,10 @@ export class GridEditor {
   private lastPointer = { x: 0, y: 0 };
   private paintValue: Tool = "wall";
 
+  // Мультитач: активные указатели и состояние пинч-жеста
+  private pointers = new Map<number, { x: number; y: number }>();
+  private pinchPrev: { dist: number; midX: number; midY: number } | null = null;
+
   // Состояние визуализации поиска
   private searchOpen = new Set<string>();
   private searchClosed = new Set<string>();
@@ -127,6 +131,16 @@ export class GridEditor {
     const x = Math.floor((px - this.offsetX) / this.cellSize);
     const y = Math.floor((py - this.offsetY) / this.cellSize);
     return { x, y };
+  }
+
+  /**
+   * Координаты указателя относительно canvas (в CSS-пикселях).
+   * Считаем через getBoundingClientRect, т.к. e.offsetX/offsetY у pointer-событий
+   * на iOS Safari работают ненадёжно.
+   */
+  private localPos(e: PointerEvent): { x: number; y: number } {
+    const rect = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   }
 
   // ---------- Модель ----------
@@ -223,7 +237,6 @@ export class GridEditor {
     let minY = Infinity;
     let maxY = -Infinity;
 
-    // ok
     for (const wall of [...this.walls, key(start.x, start.y), key(end.x, end.y)]) {
       const [x, y] = wall.split(",").map(Number);
       minX = Math.min(minX, x) - SEARCH_PADDING;
@@ -406,7 +419,17 @@ export class GridEditor {
 
     c.addEventListener("pointerdown", (e) => {
       c.setPointerCapture(e.pointerId);
-      this.lastPointer = { x: e.offsetX, y: e.offsetY };
+      const p = this.localPos(e);
+      this.pointers.set(e.pointerId, p);
+      this.lastPointer = p;
+
+      // Второй палец — переходим в жест пинч-зума/панорамы (тач)
+      if (this.pointers.size === 2) {
+        this.isPainting = false;
+        this.beginPinch();
+        return;
+      }
+      if (this.pointers.size > 2) return;
 
       // ПКМ / средняя / Shift, а также ЛКМ без выбранного инструмента — панорама
       const panButton =
@@ -419,18 +442,27 @@ export class GridEditor {
       if (e.button === 0 && this.tool) {
         this.isPainting = true;
         this.paintValue = this.tool;
-        this.paintCell(this.screenToCell(e.offsetX, e.offsetY), this.paintValue);
+        this.paintCell(this.screenToCell(p.x, p.y), this.paintValue);
       }
     });
 
     c.addEventListener("pointermove", (e) => {
-      const cell = this.screenToCell(e.offsetX, e.offsetY);
+      const p = this.localPos(e);
+      if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, p);
+
+      // Пинч-зум двумя пальцами
+      if (this.pinchPrev && this.pointers.size >= 2) {
+        this.updatePinch();
+        return;
+      }
+
+      const cell = this.screenToCell(p.x, p.y);
       this.hover = cell;
 
       if (this.isPanning) {
-        this.offsetX += e.offsetX - this.lastPointer.x;
-        this.offsetY += e.offsetY - this.lastPointer.y;
-        this.lastPointer = { x: e.offsetX, y: e.offsetY };
+        this.offsetX += p.x - this.lastPointer.x;
+        this.offsetY += p.y - this.lastPointer.y;
+        this.lastPointer = p;
         this.render();
         this.emitStats();
         return;
@@ -448,6 +480,8 @@ export class GridEditor {
     });
 
     const stop = (e: PointerEvent) => {
+      this.pointers.delete(e.pointerId);
+      if (this.pointers.size < 2) this.pinchPrev = null;
       if (this.isPanning) {
         this.isPanning = false;
         this.onPanState(false);
@@ -488,6 +522,50 @@ export class GridEditor {
       },
       { passive: false }
     );
+  }
+
+  private pinchMetrics(): { dist: number; midX: number; midY: number } {
+    const [a, b] = [...this.pointers.values()];
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return {
+      dist: Math.hypot(dx, dy) || 1,
+      midX: (a.x + b.x) / 2,
+      midY: (a.y + b.y) / 2,
+    };
+  }
+
+  private beginPinch() {
+    this.isPanning = false;
+    this.onPanState(false);
+    this.pinchPrev = this.pinchMetrics();
+  }
+
+  /** Масштабирование + панорама двумя пальцами относительно средней точки. */
+  private updatePinch() {
+    if (!this.pinchPrev) return;
+    const cur = this.pinchMetrics();
+    const prev = this.pinchPrev;
+
+    // 1) панорама вслед за перемещением средней точки
+    this.offsetX += cur.midX - prev.midX;
+    this.offsetY += cur.midY - prev.midY;
+
+    // 2) зум относительно текущей средней точки
+    const factor = cur.dist / prev.dist;
+    const next = Math.min(
+      this.maxCell,
+      Math.max(this.minCell, this.cellSize * factor)
+    );
+    const worldX = (cur.midX - this.offsetX) / this.cellSize;
+    const worldY = (cur.midY - this.offsetY) / this.cellSize;
+    this.cellSize = next;
+    this.offsetX = cur.midX - worldX * this.cellSize;
+    this.offsetY = cur.midY - worldY * this.cellSize;
+
+    this.pinchPrev = cur;
+    this.render();
+    this.emitStats();
   }
 
   private emitStats() {
