@@ -522,6 +522,34 @@ input[type="range"].slider::-moz-range-thumb {
   color: rgba(255, 255, 255, 0.7);
 }
 
+/* ---------- Настройки генератора города ---------- */
+details.settings summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--primary);
+  padding: 2px 0 10px;
+  user-select: none;
+}
+details.settings .speed-row {
+  margin-bottom: 10px;
+}
+.text-input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+.text-input:focus {
+  border-color: var(--primary);
+}
+
 /* ---------- Страница города (/city) ---------- */
 .board-city {
   background: #0d0f14;

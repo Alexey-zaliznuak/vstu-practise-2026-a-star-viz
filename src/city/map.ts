@@ -1,8 +1,9 @@
 import {
-  generateMoscowGraph,
+  generateCity,
   type CityGraph,
   type CityNode,
   type CityOptions,
+  type Pt,
 } from "./graph";
 import { AStarRunner, astar } from "./astar";
 
@@ -11,6 +12,7 @@ export interface CityStats {
   edges: number;
   scalePercent: number;
   hoverId: string | null;
+  seed: number;
 }
 
 export interface CitySearchState {
@@ -31,12 +33,19 @@ export interface CitySelection {
 }
 
 const COLORS = {
-  bg: "#0d0f14",
-  water: "#274a68",
-  waterEdge: "#16293a",
-  roadNormal: "rgba(150, 162, 186, 0.28)",
+  bg: "#0b0d11",
+  water: "#3e5769",
+  waterEdge: "#243440",
+  park: "#1f3c2b",
+  roadNormal: "rgba(150, 162, 186, 0.30)",
   roadMajor: "rgba(232, 196, 120, 0.85)",
-  bridge: "rgba(226, 150, 104, 0.9)",
+  bridge: "rgba(226, 150, 104, 0.95)",
+  rail: "rgba(190, 196, 205, 0.55)",
+  railTie: "#0b0d11",
+  stationMain: "#e8c478",
+  station: "#b9c2cf",
+  apron: "#20242b",
+  runway: "#3a4049",
   node: "rgba(150, 162, 186, 0.35)",
   open: "#26c6da",
   closed: "#b06bd6",
@@ -57,12 +66,18 @@ export class CityMap {
   private data!: CityGraph;
   private options: CityOptions;
 
-  // Вьюпорт: мир → экран = world * scale + offset
+  // Вьюпорт: мир → экран = world * scale + offset (мир — в метрах)
   private scale = 1;
   private offsetX = 0;
   private offsetY = 0;
-  private readonly minScale = 0.15;
-  private readonly maxScale = 6;
+  private readonly minScale = 0.01;
+  private readonly maxScale = 4;
+
+  // Кэш статичных слоёв (вода/парки/здания/дороги) — перерисовываем
+  // только при изменении вьюпорта или перегенерации.
+  private staticLayer: HTMLCanvasElement | null = null;
+  private staticKey = "";
+  private dataVersion = 0;
 
   // Выбор точек
   private startId: string | null = null;
@@ -147,7 +162,8 @@ export class CityMap {
   regenerate(options: CityOptions = this.options, randomPoints = true) {
     this.clearSearch(false);
     this.options = options;
-    this.data = generateMoscowGraph(options);
+    this.data = generateCity(options);
+    this.dataVersion++;
     this.startId = null;
     this.goalId = null;
     this.hoverId = null;
@@ -187,16 +203,23 @@ export class CityMap {
         return;
       }
     }
-    // запасной вариант: любые две связанные точки
-    for (const a of ids) {
-      for (const b of ids) {
-        if (a === b) continue;
-        if (astar(this.data.graph, this.data.nodes, a, b).path) {
-          this.startId = a;
-          this.goalId = b;
-          return;
+    // запасной вариант: BFS из случайного узла — берём самую дальнюю достижимую вершину
+    const a = ids[Math.floor(Math.random() * ids.length)];
+    const visited = new Set<string>([a]);
+    const queue = [a];
+    let last = a;
+    for (let head = 0; head < queue.length; head++) {
+      last = queue[head];
+      for (const e of this.data.graph.get(queue[head]) ?? []) {
+        if (!visited.has(e.to)) {
+          visited.add(e.to);
+          queue.push(e.to);
         }
       }
+    }
+    if (last !== a) {
+      this.startId = a;
+      this.goalId = last;
     }
   }
 
@@ -331,6 +354,7 @@ export class CityMap {
       edges: edges / 2,
       scalePercent: Math.round(this.scale * 100),
       hoverId: this.hoverId,
+      seed: this.data.seed,
     });
   }
 
@@ -476,74 +500,216 @@ export class CityMap {
     const w = this.viewW;
     const h = this.viewH;
 
+    this.ensureStaticLayer();
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, w, h);
+    if (this.staticLayer) ctx.drawImage(this.staticLayer, 0, 0, w, h);
 
-    this.drawRiver();
-    this.drawEdges();
     this.drawSearchOverlay();
     this.drawNodes();
     this.drawMarkers();
   }
 
-  private drawRiver() {
-    const ctx = this.ctx;
-    const river = this.data.river;
-    if (river.length < 2) return;
-    ctx.save();
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
+  /**
+   * Статичные слои (вода, парки, здания, дороги, ЖД, аэропорты) рисуем в
+   * offscreen-канвас и перерисовываем только при смене вьюпорта/карты —
+   * во время анимации поиска каждый кадр обходится одним drawImage.
+   */
+  private ensureStaticLayer() {
+    const key = `${this.canvas.width}x${this.canvas.height}|${this.scale}|${this.offsetX}|${this.offsetY}|${this.dataVersion}`;
+    if (this.staticLayer && key === this.staticKey) return;
+    this.staticKey = key;
 
-    // Внешняя «набережная»
-    ctx.strokeStyle = COLORS.waterEdge;
-    ctx.lineWidth = this.data.riverWidth * this.scale + 6;
-    this.strokePath(river);
+    if (!this.staticLayer) this.staticLayer = document.createElement("canvas");
+    const layer = this.staticLayer;
+    layer.width = this.canvas.width;
+    layer.height = this.canvas.height;
+    const ctx = layer.getContext("2d")!;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
 
-    // Вода
-    ctx.strokeStyle = COLORS.water;
-    ctx.lineWidth = this.data.riverWidth * this.scale;
-    this.strokePath(river);
-    ctx.restore();
+    ctx.fillStyle = COLORS.bg;
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
+
+    this.drawParks(ctx);
+    this.drawWater(ctx);
+    this.drawAirports(ctx);
+    this.drawEdges(ctx);
+    this.drawBuildings(ctx);
+    this.drawRail(ctx);
+    this.drawStations(ctx);
   }
 
-  private strokePath(pts: { x: number; y: number }[]) {
-    const ctx = this.ctx;
-    ctx.beginPath();
+  /** Толщина линии: метры → пиксели с нижним пределом видимости. */
+  private lw(meters: number, minPx: number): number {
+    return Math.max(minPx, meters * this.scale);
+  }
+
+  private tracePath(ctx: CanvasRenderingContext2D, pts: Pt[]) {
     const p0 = this.worldToScreen(pts[0].x, pts[0].y);
     ctx.moveTo(p0.x, p0.y);
     for (let i = 1; i < pts.length; i++) {
       const p = this.worldToScreen(pts[i].x, pts[i].y);
       ctx.lineTo(p.x, p.y);
     }
-    ctx.stroke();
   }
 
-  private drawEdges() {
-    const ctx = this.ctx;
+  private fillPoly(ctx: CanvasRenderingContext2D, pts: Pt[], color: string) {
+    if (pts.length < 3) return;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    this.tracePath(ctx, pts);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  private drawParks(ctx: CanvasRenderingContext2D) {
+    for (const p of this.data.parks) this.fillPoly(ctx, p, COLORS.park);
+  }
+
+  private drawWater(ctx: CanvasRenderingContext2D) {
+    ctx.save();
+    ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    // рисуем каждое неориентированное ребро один раз (a.id < b.id)
-    for (const [from, list] of this.data.graph) {
-      const a = this.data.nodes.get(from)!;
-      for (const edge of list) {
-        if (from >= edge.to) continue;
-        const b = this.data.nodes.get(edge.to)!;
-        const pa = this.worldToScreen(a.x, a.y);
-        const pb = this.worldToScreen(b.x, b.y);
-        if (edge.bridge) {
-          ctx.strokeStyle = COLORS.bridge;
-          ctx.lineWidth = Math.max(1.5, 3 * this.scale);
-        } else if (edge.major) {
-          ctx.strokeStyle = COLORS.roadMajor;
-          ctx.lineWidth = Math.max(1.2, 2.4 * this.scale);
-        } else {
-          ctx.strokeStyle = COLORS.roadNormal;
-          ctx.lineWidth = Math.max(0.6, 1.2 * this.scale);
-        }
+    for (const rv of this.data.rivers) {
+      if (rv.points.length < 2) continue;
+      ctx.strokeStyle = COLORS.waterEdge;
+      ctx.lineWidth = this.lw(rv.width, 2) + 4;
+      ctx.beginPath();
+      this.tracePath(ctx, rv.points);
+      ctx.stroke();
+      ctx.strokeStyle = COLORS.water;
+      ctx.lineWidth = this.lw(rv.width, 1.5);
+      ctx.beginPath();
+      this.tracePath(ctx, rv.points);
+      ctx.stroke();
+    }
+    for (const st of this.data.streams) {
+      if (st.points.length < 2) continue;
+      ctx.strokeStyle = COLORS.water;
+      ctx.lineWidth = this.lw(st.width, 1);
+      ctx.beginPath();
+      this.tracePath(ctx, st.points);
+      ctx.stroke();
+    }
+    for (const lake of this.data.lakes) this.fillPoly(ctx, lake, COLORS.water);
+    ctx.restore();
+  }
+
+  private drawAirports(ctx: CanvasRenderingContext2D) {
+    for (const ap of this.data.airports) {
+      this.fillPoly(ctx, ap.apron, COLORS.apron);
+      ctx.lineCap = "butt";
+      for (const rw of ap.runways) {
+        ctx.strokeStyle = COLORS.runway;
+        ctx.lineWidth = this.lw(rw.width, 2);
         ctx.beginPath();
-        ctx.moveTo(pa.x, pa.y);
-        ctx.lineTo(pb.x, pb.y);
+        this.tracePath(ctx, [rw.a, rw.b]);
         ctx.stroke();
+        // осевая пунктирная линия
+        ctx.strokeStyle = "rgba(255,255,255,0.35)";
+        ctx.lineWidth = Math.max(0.6, this.lw(3, 0.6));
+        ctx.setLineDash([8, 10]);
+        ctx.beginPath();
+        this.tracePath(ctx, [rw.a, rw.b]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      // значок самолёта
+      const c = this.worldToScreen(ap.center.x, ap.center.y);
+      const fs = Math.max(12, 320 * this.scale);
+      ctx.font = `${fs}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(255,255,255,0.5)";
+      ctx.fillText("✈", c.x, c.y);
+    }
+  }
+
+  private drawEdges(ctx: CanvasRenderingContext2D) {
+    ctx.lineCap = "round";
+    // Три прохода по стилям, чтобы не дёргать state-машину канваса на каждом ребре.
+    const passes: {
+      match: (e: { major: boolean; bridge: boolean }) => boolean;
+      color: string;
+      width: number;
+    }[] = [
+      { match: (e) => !e.major && !e.bridge, color: COLORS.roadNormal, width: this.lw(9, 0.6) },
+      { match: (e) => e.major && !e.bridge, color: COLORS.roadMajor, width: this.lw(22, 1.4) },
+      { match: (e) => e.bridge, color: COLORS.bridge, width: this.lw(26, 2) },
+    ];
+    for (const pass of passes) {
+      ctx.strokeStyle = pass.color;
+      ctx.lineWidth = pass.width;
+      ctx.beginPath();
+      for (const [from, list] of this.data.graph) {
+        const a = this.data.nodes.get(from)!;
+        for (const edge of list) {
+          if (from >= edge.to || !pass.match(edge)) continue;
+          const b = this.data.nodes.get(edge.to)!;
+          const pa = this.worldToScreen(a.x, a.y);
+          const pb = this.worldToScreen(b.x, b.y);
+          ctx.moveTo(pa.x, pa.y);
+          ctx.lineTo(pb.x, pb.y);
+        }
+      }
+      ctx.stroke();
+    }
+  }
+
+  private drawBuildings(ctx: CanvasRenderingContext2D) {
+    // при сильном отдалении дома вырождаются в субпиксели — пропускаем
+    if (this.scale < 0.02) return;
+    let color = "";
+    for (const b of this.data.buildings) {
+      if (b.color !== color) {
+        color = b.color;
+        ctx.fillStyle = color;
+      }
+      ctx.beginPath();
+      this.tracePath(ctx, b.poly);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  private drawRail(ctx: CanvasRenderingContext2D) {
+    ctx.lineCap = "butt";
+    for (const line of this.data.rails) {
+      if (line.length < 2) continue;
+      ctx.strokeStyle = COLORS.rail;
+      ctx.lineWidth = this.lw(14, 1.6);
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      this.tracePath(ctx, line);
+      ctx.stroke();
+      // «шпалы»: пунктир цветом фона поверх линии
+      ctx.strokeStyle = COLORS.railTie;
+      ctx.lineWidth = this.lw(8, 0.9);
+      const dash = Math.max(4, 60 * this.scale);
+      ctx.setLineDash([dash, dash]);
+      ctx.beginPath();
+      this.tracePath(ctx, line);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  private drawStations(ctx: CanvasRenderingContext2D) {
+    for (const st of this.data.stations) {
+      const p = this.worldToScreen(st.x, st.y);
+      const r = st.main ? Math.max(5, 60 * this.scale) : Math.max(3, 35 * this.scale);
+      ctx.fillStyle = st.main ? COLORS.stationMain : COLORS.station;
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.rect(p.x - r, p.y - r, r * 2, r * 2);
+      ctx.fill();
+      ctx.stroke();
+      if (st.main) {
+        ctx.fillStyle = "rgba(0,0,0,0.75)";
+        ctx.font = `700 ${Math.max(8, r)}px Roboto, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("ЖД", p.x, p.y + 0.5);
       }
     }
   }
@@ -555,7 +721,7 @@ export class CityMap {
 
     // Рёбра дерева поиска (cameFrom) для просмотренных вершин
     ctx.strokeStyle = SEARCH_TREE_EDGE;
-    ctx.lineWidth = Math.max(1, 1.6 * this.scale);
+    ctx.lineWidth = this.lw(12, 1);
     ctx.beginPath();
     for (const [to, from] of r.cameFrom) {
       if (!r.closed.has(to) && !r.open.has(to)) continue;
@@ -577,14 +743,14 @@ export class CityMap {
       ctx.fill();
     };
 
-    const cr = Math.max(2, 2.6 * this.scale);
+    const cr = Math.max(2, 20 * this.scale);
     for (const id of r.closed) dot(id, COLORS.closed, cr);
     for (const id of r.open) dot(id, COLORS.open, cr);
 
     // Найденный путь
     if (r.path && r.path.length > 1) {
       ctx.strokeStyle = COLORS.pathEdge;
-      ctx.lineWidth = Math.max(2.5, 4 * this.scale);
+      ctx.lineWidth = this.lw(30, 2.5);
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
       ctx.beginPath();
@@ -595,16 +761,20 @@ export class CityMap {
         else ctx.lineTo(p.x, p.y);
       }
       ctx.stroke();
-      for (const id of r.path) dot(id, COLORS.pathNode, Math.max(2.5, 3 * this.scale));
+      for (const id of r.path) dot(id, COLORS.pathNode, Math.max(2.5, 22 * this.scale));
     } else if (r.current && !r.finished) {
-      dot(r.current, COLORS.current, Math.max(3, 3.4 * this.scale));
+      dot(r.current, COLORS.current, Math.max(3, 26 * this.scale));
     }
   }
 
   private drawNodes() {
     const ctx = this.ctx;
-    const rad = Math.max(0.8, 1.5 * this.scale);
-    if (rad < 1.2 && !this.hoverId) return; // при сильном отдалении точки не рисуем
+    const rad = 12 * this.scale;
+    if (rad < 1.1) {
+      // при сильном отдалении точки не рисуем — только подсветку наведения
+      this.drawHover();
+      return;
+    }
     ctx.fillStyle = COLORS.node;
     for (const n of this.data.nodes.values()) {
       const p = this.worldToScreen(n.x, n.y);
@@ -612,16 +782,20 @@ export class CityMap {
       ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
       ctx.fill();
     }
+    this.drawHover();
+  }
 
-    if (this.hoverId) {
-      const n = this.data.nodes.get(this.hoverId)!;
-      const p = this.worldToScreen(n.x, n.y);
-      ctx.strokeStyle = COLORS.hover;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, Math.max(6, 4 * this.scale), 0, Math.PI * 2);
-      ctx.stroke();
-    }
+  private drawHover() {
+    if (!this.hoverId) return;
+    const n = this.data.nodes.get(this.hoverId);
+    if (!n) return;
+    const ctx = this.ctx;
+    const p = this.worldToScreen(n.x, n.y);
+    ctx.strokeStyle = COLORS.hover;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, Math.max(6, 30 * this.scale), 0, Math.PI * 2);
+    ctx.stroke();
   }
 
   private drawMarkers() {
