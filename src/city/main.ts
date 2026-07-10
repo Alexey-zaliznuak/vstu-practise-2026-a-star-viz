@@ -23,7 +23,7 @@ interface ParamDef {
 
 const pct = (v: number) => `${v}%`;
 const PARAMS: ParamDef[] = [
-  { key: "mapSizeKm", label: "Размер карты", min: 2, max: 12, step: 0.5, toOption: (v) => v, fmt: (v) => `${v} × ${v} км` },
+  { key: "mapSizeKm", label: "Размер карты", min: 2, max: 100, step: 0.5, toOption: (v) => v, fmt: (v) => `${v} × ${v} км` },
   { key: "rings", label: "Кольцевые магистрали", min: 1, max: 10, step: 1, toOption: (v) => v, fmt: String },
   { key: "spokes", label: "Радиальные проспекты", min: 6, max: 20, step: 1, toOption: (v) => v, fmt: String },
   { key: "ringWobble", label: "Кривизна колец", min: 0, max: 100, step: 5, toOption: (v) => v / 100, fmt: pct },
