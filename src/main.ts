@@ -221,6 +221,7 @@ const setSpeedByValue = (value: number) => {
 };
 
 // ---- Обучение ----
+console.log("[tutorial] создаём экземпляр Tutorial");
 const tutorial = new Tutorial(editor, {
   onGenerateMap: () => editor.generateRandom(0.28, 15, true),
   onSetSpeed: setSpeedByValue,
