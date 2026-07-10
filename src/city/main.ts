@@ -1,5 +1,5 @@
 import "../style.css";
-import { CityMap, type CityStats, type CitySearchState, type CitySelection } from "./map";
+import { CityMap, type CityStats, type CitySearchState, type CitySelection, type RoadInfo } from "./map";
 import { CITY_DEFAULTS, type CityOptions } from "./graph";
 
 const SPEED_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000];
@@ -74,7 +74,7 @@ app.innerHTML = /* html */ `
     <section class="card">
       <h2>Маршрут</h2>
       <p class="hint" id="sel-hint" style="margin-bottom: 12px">
-        Кликай по перекрёсткам, чтобы задать <b>A</b> и <b>B</b>. По умолчанию — случайные.
+        Клик по <b>перекрёстку</b> — точки A и B. Клик по <b>дороге</b> — вес участка.
       </p>
       <div class="stat-row">
         <span class="label"><span class="dot" style="background:#38c172"></span> Точка A (старт)</span>
@@ -169,7 +169,8 @@ app.innerHTML = /* html */ `
 
   <main class="board board-city pan-mode" id="board">
     <canvas id="city"></canvas>
-    <div class="coords" id="coords">кликни по перекрёстку</div>
+    <div class="coords" id="coords">кликни по перекрёстку или дороге</div>
+    <div class="cell-tip" id="road-tip" hidden></div>
   </main>
 `;
 
@@ -195,6 +196,30 @@ const collectOptions = (): CityOptions => {
   const seedRaw = seedInput.value.trim();
   if (seedRaw !== "" && Number.isFinite(Number(seedRaw))) opts.seed = Number(seedRaw);
   return opts;
+};
+
+const board = document.querySelector<HTMLDivElement>("#board")!;
+const roadTip = document.querySelector<HTMLDivElement>("#road-tip")!;
+
+const placeRoadTip = (info: RoadInfo) => {
+  const bw = board.clientWidth;
+  const bh = board.clientHeight;
+  const tw = roadTip.offsetWidth;
+  const th = roadTip.offsetHeight;
+  let left = info.px + 16;
+  let top = info.py + 16;
+  if (left + tw > bw - 8) left = info.px - tw - 16;
+  if (top + th > bh - 8) top = info.py - th - 16;
+  left = Math.max(8, left);
+  top = Math.max(8, top);
+  roadTip.style.left = `${left}px`;
+  roadTip.style.top = `${top}px`;
+};
+
+const roadKind = (info: RoadInfo) => {
+  if (info.bridge) return "мост";
+  if (info.major) return "магистраль";
+  return "улица";
 };
 
 const canvas = document.querySelector<HTMLCanvasElement>("#city")!;
@@ -223,7 +248,24 @@ city.onStats = (s: CityStats) => {
   el.scale.textContent = `${s.scalePercent}%`;
   el.coords.textContent = s.hoverId
     ? `перекрёсток ${s.hoverId}`
-    : "кликни по перекрёстку";
+    : "кликни по перекрёстку или дороге";
+};
+
+city.onRoadInfo = (info: RoadInfo | null) => {
+  if (!info) {
+    roadTip.setAttribute("hidden", "");
+    return;
+  }
+  const len = Math.round(info.lengthM);
+  const w = Math.round(info.weight);
+  roadTip.innerHTML = /* html */ `
+    <div class="cell-tip-row"><b>${roadKind(info)}</b> · ${info.from} → ${info.to}</div>
+    <div class="cell-tip-row">Длина: <b>${len}</b> м</div>
+    <div class="cell-tip-row">Вес для A*: <b>${w}</b> усл.ед.</div>
+    <div class="cell-tip-row muted">Магистраль ×0.88, мост ×1.12</div>
+  `;
+  roadTip.removeAttribute("hidden");
+  placeRoadTip(info);
 };
 
 city.onSelection = (s: CitySelection) => {

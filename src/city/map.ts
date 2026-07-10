@@ -4,6 +4,7 @@ import {
   type CityNode,
   type CityOptions,
   type Pt,
+  type RoadSegment,
 } from "./graph";
 import { AStarRunner, astar } from "./astar";
 
@@ -13,6 +14,19 @@ export interface CityStats {
   scalePercent: number;
   hoverId: string | null;
   seed: number;
+}
+
+/** Информация о дороге под курсором / по клику. */
+export interface RoadInfo {
+  from: string;
+  to: string;
+  weight: number;
+  lengthM: number;
+  major: boolean;
+  bridge: boolean;
+  /** Позиция подсказки на холсте (CSS-пиксели). */
+  px: number;
+  py: number;
 }
 
 export interface CitySearchState {
@@ -55,6 +69,8 @@ const COLORS = {
   goal: "#f0524b",
   hover: "#ffffff",
   current: "#ff9800",
+  roadHover: "rgba(255, 214, 0, 0.95)",
+  roadPick: "rgba(255, 120, 60, 0.95)",
 };
 
 const SEARCH_TREE_EDGE = "rgba(176, 107, 214, 0.5)";
@@ -83,6 +99,8 @@ export class CityMap {
   private startId: string | null = null;
   private goalId: string | null = null;
   private hoverId: string | null = null;
+  private hoverRoad: RoadSegment | null = null;
+  private pickedRoad: RoadSegment | null = null;
 
   // Панорамирование
   private isPanning = false;
@@ -105,6 +123,8 @@ export class CityMap {
   onStats: (s: CityStats) => void = () => {};
   onSearch: (s: CitySearchState) => void = () => {};
   onSelection: (s: CitySelection) => void = () => {};
+  /** null — скрыть подсказку по дороге */
+  onRoadInfo: (info: RoadInfo | null) => void = () => {};
 
   constructor(private canvas: HTMLCanvasElement, options: CityOptions = {}) {
     const ctx = canvas.getContext("2d");
@@ -167,6 +187,9 @@ export class CityMap {
     this.startId = null;
     this.goalId = null;
     this.hoverId = null;
+    this.hoverRoad = null;
+    this.pickedRoad = null;
+    this.onRoadInfo(null);
     this.fitToBounds();
     if (randomPoints) this.pickRandomPair();
     this.render();
@@ -223,7 +246,7 @@ export class CityMap {
     }
   }
 
-  // ---------- Выбор точек ----------
+  // ---------- Выбор точек и дорог ----------
   private nearestNode(worldX: number, worldY: number, maxDistPx = 26): string | null {
     let best: string | null = null;
     let bestD = Infinity;
@@ -238,13 +261,68 @@ export class CityMap {
     return bestD <= maxWorld ? best : null;
   }
 
+  /** Ближайший отрезок дороги к точке в мире (метры). */
+  private nearestRoad(worldX: number, worldY: number, maxDistPx = 22): RoadSegment | null {
+    let best: RoadSegment | null = null;
+    let bestD = Infinity;
+    const maxWorld = maxDistPx / this.scale;
+    for (const road of this.data.roads) {
+      const d = segPointDist(road.a, road.b, worldX, worldY);
+      if (d < bestD) {
+        bestD = d;
+        best = road;
+      }
+    }
+    return bestD <= maxWorld ? best : null;
+  }
+
+  private roadLength(road: RoadSegment) {
+    return Math.hypot(road.b.x - road.a.x, road.b.y - road.a.y);
+  }
+
+  private roadInfo(road: RoadSegment, px: number, py: number): RoadInfo {
+    return {
+      from: road.from,
+      to: road.to,
+      weight: road.weight,
+      lengthM: this.roadLength(road),
+      major: road.major,
+      bridge: road.bridge,
+      px,
+      py,
+    };
+  }
+
+  private emitRoadInfo(road: RoadSegment | null, px: number, py: number) {
+    this.onRoadInfo(road ? this.roadInfo(road, px, py) : null);
+  }
+
   private handleClick(px: number, py: number) {
     const w = this.screenToWorld(px, py);
-    const hit = this.nearestNode(w.x, w.y);
+    const nodeHit = this.nearestNode(w.x, w.y, 28);
+    const roadHit = this.nearestRoad(w.x, w.y, 24);
+
+    if (!nodeHit && !roadHit) {
+      this.pickedRoad = null;
+      this.emitRoadInfo(null, px, py);
+      this.render();
+      return;
+    }
+
+    // Приоритет дороге, если клик ближе к линии, чем к перекрёстку.
+    if (roadHit && (!nodeHit || this.roadDistPx(roadHit, w) < this.nodeDistPx(nodeHit, w) * 0.85)) {
+      this.pickedRoad = roadHit;
+      this.emitRoadInfo(roadHit, px, py);
+      this.render();
+      return;
+    }
+
+    this.pickedRoad = null;
+    this.emitRoadInfo(null, px, py);
+    const hit = nodeHit;
     if (!hit) return;
 
     this.clearSearch(false);
-    // Логика: если оба заданы — начинаем заново со старта.
     if (this.startId && this.goalId) {
       this.startId = hit;
       this.goalId = null;
@@ -257,10 +335,21 @@ export class CityMap {
     this.emitSelection();
   }
 
+  private nodeDistPx(id: string, w: { x: number; y: number }) {
+    const n = this.data.nodes.get(id)!;
+    return Math.hypot(n.x - w.x, n.y - w.y) * this.scale;
+  }
+
+  private roadDistPx(road: RoadSegment, w: { x: number; y: number }) {
+    return segPointDist(road.a, road.b, w.x, w.y) * this.scale;
+  }
+
   clearSelection() {
     this.clearSearch(false);
     this.startId = null;
     this.goalId = null;
+    this.pickedRoad = null;
+    this.onRoadInfo(null);
     this.render();
     this.emitSelection();
   }
@@ -405,11 +494,23 @@ export class CityMap {
         return;
       }
 
-      // Наведение — подсветка ближайшего перекрёстка
+      // Наведение — дорога или перекрёсток
       const w = this.screenToWorld(p.x, p.y);
-      const hit = this.nearestNode(w.x, w.y);
-      if (hit !== this.hoverId) {
-        this.hoverId = hit;
+      const road = this.nearestRoad(w.x, w.y, 20);
+      const node = this.nearestNode(w.x, w.y, 24);
+      const preferRoad =
+        road && (!node || this.roadDistPx(road, w) < this.nodeDistPx(node, w) * 0.9);
+
+      const nextRoad = preferRoad ? road : null;
+      const nextNode = preferRoad ? null : node;
+      const roadChanged =
+        nextRoad?.from !== this.hoverRoad?.from || nextRoad?.to !== this.hoverRoad?.to;
+      const nodeChanged = nextNode !== this.hoverId;
+
+      if (roadChanged || nodeChanged) {
+        this.hoverRoad = nextRoad;
+        this.hoverId = nextNode;
+        if (!this.pickedRoad) this.emitRoadInfo(nextRoad, p.x, p.y);
         this.render();
         this.emitStats();
       }
@@ -436,8 +537,10 @@ export class CityMap {
     c.addEventListener("pointercancel", stop);
 
     c.addEventListener("pointerleave", () => {
-      if (this.hoverId !== null) {
+      if (this.hoverId !== null || this.hoverRoad !== null) {
         this.hoverId = null;
+        this.hoverRoad = null;
+        if (!this.pickedRoad) this.onRoadInfo(null);
         this.render();
         this.emitStats();
       }
@@ -505,6 +608,7 @@ export class CityMap {
     if (this.staticLayer) ctx.drawImage(this.staticLayer, 0, 0, w, h);
 
     this.drawSearchOverlay();
+    this.drawRoadHighlight();
     this.drawNodes();
     this.drawMarkers();
   }
@@ -596,7 +700,41 @@ export class CityMap {
 
   private drawAirports(ctx: CanvasRenderingContext2D) {
     for (const ap of this.data.airports) {
+      // поле вокруг перрона
+      const grass = ap.apron.map((p) => {
+        const c = ap.center;
+        const k = 1.06;
+        return { x: c.x + (p.x - c.x) * k, y: c.y + (p.y - c.y) * k };
+      });
+      this.fillPoly(ctx, grass, "#1a2e22");
       this.fillPoly(ctx, ap.apron, COLORS.apron);
+
+      // парковка у терминала
+      if (ap.parking.length >= 3) {
+        this.fillPoly(ctx, ap.parking, "#2a3038");
+      }
+
+      // рулежные дорожки
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      for (const tw of ap.taxiways) {
+        if (tw.length < 2) continue;
+        ctx.strokeStyle = "rgba(255, 220, 80, 0.55)";
+        ctx.lineWidth = this.lw(16, 1.2);
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        this.tracePath(ctx, tw);
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(255, 220, 80, 0.9)";
+        ctx.lineWidth = Math.max(0.8, 2 * this.scale);
+        ctx.setLineDash([10, 12]);
+        ctx.beginPath();
+        this.tracePath(ctx, tw);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // ВПП
       ctx.lineCap = "butt";
       for (const rw of ap.runways) {
         ctx.strokeStyle = COLORS.runway;
@@ -604,7 +742,23 @@ export class CityMap {
         ctx.beginPath();
         this.tracePath(ctx, [rw.a, rw.b]);
         ctx.stroke();
-        // осевая пунктирная линия
+        // пороги
+        const pa = this.worldToScreen(rw.a.x, rw.a.y);
+        const pb = this.worldToScreen(rw.b.x, rw.b.y);
+        const dx = pb.x - pa.x;
+        const dy = pb.y - pa.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const nx = (-dy / len) * this.lw(rw.width * 0.35, 3);
+        const ny = (dx / len) * this.lw(rw.width * 0.35, 3);
+        ctx.strokeStyle = "rgba(255,255,255,0.45)";
+        ctx.lineWidth = Math.max(1, 3 * this.scale);
+        ctx.beginPath();
+        ctx.moveTo(pa.x + nx, pa.y + ny);
+        ctx.lineTo(pa.x - nx, pa.y - ny);
+        ctx.moveTo(pb.x + nx, pb.y + ny);
+        ctx.lineTo(pb.x - nx, pb.y - ny);
+        ctx.stroke();
+        // осевая
         ctx.strokeStyle = "rgba(255,255,255,0.35)";
         ctx.lineWidth = Math.max(0.6, this.lw(3, 0.6));
         ctx.setLineDash([8, 10]);
@@ -613,14 +767,36 @@ export class CityMap {
         ctx.stroke();
         ctx.setLineDash([]);
       }
-      // значок самолёта
-      const c = this.worldToScreen(ap.center.x, ap.center.y);
-      const fs = Math.max(12, 320 * this.scale);
-      ctx.font = `${fs}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = "rgba(255,255,255,0.5)";
-      ctx.fillText("✈", c.x, c.y);
+
+      // терминал
+      if (ap.terminal.length >= 3) {
+        this.fillPoly(ctx, ap.terminal, "#8b95a3");
+        ctx.strokeStyle = "rgba(255,255,255,0.25)";
+        ctx.lineWidth = Math.max(0.6, 2 * this.scale);
+        const t0 = this.worldToScreen(ap.terminal[0].x, ap.terminal[0].y);
+        const t1 = this.worldToScreen(ap.terminal[1].x, ap.terminal[1].y);
+        const stripes = 5;
+        ctx.beginPath();
+        for (let i = 1; i < stripes; i++) {
+          const t = i / stripes;
+          ctx.moveTo(t0.x + (t1.x - t0.x) * t, t0.y);
+          ctx.lineTo(
+            this.worldToScreen(ap.terminal[3].x, ap.terminal[3].y).x +
+              (t1.x - t0.x) * t,
+            this.worldToScreen(ap.terminal[3].x, ap.terminal[3].y).y
+          );
+        }
+        ctx.stroke();
+      }
+
+      // диспетчерская вышка
+      const tw = this.worldToScreen(ap.tower.x, ap.tower.y);
+      const twW = Math.max(4, 28 * this.scale);
+      const twH = Math.max(8, 70 * this.scale);
+      ctx.fillStyle = "#c5ccd6";
+      ctx.fillRect(tw.x - twW / 2, tw.y - twH, twW, twH);
+      ctx.fillStyle = "#7eb8e8";
+      ctx.fillRect(tw.x - twW * 0.7, tw.y - twH - twW * 0.5, twW * 1.4, twW * 0.9);
     }
   }
 
@@ -656,7 +832,6 @@ export class CityMap {
   }
 
   private drawBuildings(ctx: CanvasRenderingContext2D) {
-    // при сильном отдалении дома вырождаются в субпиксели — пропускаем
     if (this.scale < 0.02) return;
     let color = "";
     for (const b of this.data.buildings) {
@@ -665,10 +840,54 @@ export class CityMap {
         ctx.fillStyle = color;
       }
       ctx.beginPath();
-      this.tracePath(ctx, b.poly);
-      ctx.closePath();
+      const pts = b.poly;
+      if (pts.length < 3) continue;
+      const scr = pts.map((p) => this.worldToScreen(p.x, p.y));
+      if (b.rounded && scr.length === 4) {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const p of scr) {
+          minX = Math.min(minX, p.x);
+          minY = Math.min(minY, p.y);
+          maxX = Math.max(maxX, p.x);
+          maxY = Math.max(maxY, p.y);
+        }
+        const rw = maxX - minX;
+        const rh = maxY - minY;
+        const r = Math.min(5, rw * 0.18, rh * 0.18);
+        ctx.roundRect(minX, minY, rw, rh, r);
+      } else {
+        ctx.moveTo(scr[0].x, scr[0].y);
+        for (let i = 1; i < scr.length; i++) ctx.lineTo(scr[i].x, scr[i].y);
+        ctx.closePath();
+      }
       ctx.fill();
     }
+  }
+
+  private drawRoadHighlight() {
+    const ctx = this.ctx;
+    const drawOne = (road: RoadSegment, color: string, extra: number) => {
+      const pa = this.worldToScreen(road.a.x, road.a.y);
+      const pb = this.worldToScreen(road.b.x, road.b.y);
+      const w = (road.bridge ? 26 : road.major ? 22 : 9) + extra;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = this.lw(w, 2.5);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(pa.x, pa.y);
+      ctx.lineTo(pb.x, pb.y);
+      ctx.stroke();
+    };
+    if (
+      this.hoverRoad &&
+      !(this.pickedRoad && this.hoverRoad.from === this.pickedRoad.from && this.hoverRoad.to === this.pickedRoad.to)
+    ) {
+      drawOne(this.hoverRoad, COLORS.roadHover, 4);
+    }
+    if (this.pickedRoad) drawOne(this.pickedRoad, COLORS.roadPick, 8);
   }
 
   private drawRail(ctx: CanvasRenderingContext2D) {
@@ -823,6 +1042,17 @@ export class CityMap {
     ctx.fillText(label, p.x, p.y + 1);
   }
 
+}
+
+/** Расстояние от точки до отрезка (мировые координаты). */
+function segPointDist(a: Pt, b: Pt, px: number, py: number): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - a.x, py - a.y);
+  let t = ((px - a.x) * dx + (py - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
 }
 
 export type { CityNode };

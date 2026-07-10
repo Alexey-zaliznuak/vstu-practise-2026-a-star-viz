@@ -42,6 +42,18 @@ export interface Waterway {
 export interface Building {
   poly: Pt[];
   color: string;
+  /** Слегка скруглённые углы при отрисовке. */
+  rounded?: boolean;
+}
+
+export interface RoadSegment {
+  from: string;
+  to: string;
+  a: Pt;
+  b: Pt;
+  weight: number;
+  major: boolean;
+  bridge: boolean;
 }
 
 export interface RailStation {
@@ -60,6 +72,10 @@ export interface Airport {
   apron: Pt[];
   runways: Runway[];
   center: Pt;
+  terminal: Pt[];
+  taxiways: Pt[][];
+  tower: Pt;
+  parking: Pt[];
 }
 
 export interface CityGraph {
@@ -71,6 +87,8 @@ export interface CityGraph {
   lakes: Pt[][];
   parks: Pt[][];
   buildings: Building[];
+  /** Список дорог для попадания кликом и подсказок. */
+  roads: RoadSegment[];
   rails: Pt[][];
   stations: RailStation[];
   airports: Airport[];
@@ -243,7 +261,11 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
     const b = nodes.get(bId);
     if (!a || !b || aId === bId) return;
     if (graph.get(aId)!.some((e) => e.to === bId)) return;
-    const weight = Math.hypot(b.x - a.x, b.y - a.y) * (bridge ? 1.1 : 1);
+    const dist = Math.hypot(b.x - a.x, b.y - a.y);
+    // Вес = длина в метрах; магистрали чуть «дешевле», мосты — чуть дороже.
+    let weight = dist;
+    if (major) weight *= 0.88;
+    if (bridge) weight *= 1.12;
     graph.get(aId)!.push({ to: bId, weight, major, bridge });
     graph.get(bId)!.push({ to: aId, weight, major, bridge });
   };
@@ -336,13 +358,6 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
     return polar(th, R);
   };
 
-  const paramQuad = (level: number, s: number, u0: number, u1: number, v0: number, v1: number): Pt[] => [
-    sectionPoint(level, s, u0, v0),
-    sectionPoint(level, s, u1, v0),
-    sectionPoint(level, s, u1, v1),
-    sectionPoint(level, s, u0, v1),
-  ];
-
   /** Полигон-«рамка» секции, повторяющий кривизну её границ. */
   const paramRect = (level: number, s: number, u0: number, u1: number, v0: number, v1: number): Pt[] => {
     const pts: Pt[] = [];
@@ -389,6 +404,102 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
       if (r <= 0) return p.color;
     }
     return BUILDING_PALETTE[0].color;
+  };
+
+  /** Прямоугольник в локальной системе ячейки (углы p00, p10, p01 — доли 0..1). */
+  const cellRect = (p00: Pt, uVec: Pt, vVec: Pt, fu0: number, fu1: number, fv0: number, fv1: number): Pt[] => [
+    { x: p00.x + uVec.x * fu0 + vVec.x * fv0, y: p00.y + uVec.y * fu0 + vVec.y * fv0 },
+    { x: p00.x + uVec.x * fu1 + vVec.x * fv0, y: p00.y + uVec.y * fu1 + vVec.y * fv0 },
+    { x: p00.x + uVec.x * fu1 + vVec.x * fv1, y: p00.y + uVec.y * fu1 + vVec.y * fv1 },
+    { x: p00.x + uVec.x * fu0 + vVec.x * fv1, y: p00.y + uVec.y * fu0 + vVec.y * fv1 },
+  ];
+
+  /**
+   * Квартал с двором: вдоль улиц — вытянутые продольные корпуса (как на референсе).
+   * Размеры в метрах, ориентация — вдоль границ ячейки, а не к центру города.
+   */
+  const fillCourtyardBlock = (
+    level: number,
+    s: number,
+    u0: number,
+    u1: number,
+    v0: number,
+    v1: number
+  ) => {
+    const p00 = sectionPoint(level, s, u0, v0);
+    const p10 = sectionPoint(level, s, u1, v0);
+    const p01 = sectionPoint(level, s, u0, v1);
+    const uVec = { x: p10.x - p00.x, y: p10.y - p00.y };
+    const vVec = { x: p01.x - p00.x, y: p01.y - p00.y };
+    const wM = Math.hypot(uVec.x, uVec.y);
+    const hM = Math.hypot(vVec.x, vVec.y);
+    if (wM < 28 || hM < 28) return;
+    if (rng() < 0.09) return;
+
+    const street = clamp(rand(8, 14), 6, Math.min(wM, hM) * 0.14);
+    const depth = clamp(rand(10, 17), 8, Math.min(wM, hM) * 0.32);
+    const sf = street / wM;
+    const stf = street / hM;
+    const df = depth / hM;
+    const dfu = depth / wM;
+
+    const addSide = (
+      alongU: boolean,
+      stripCount: number,
+      fu0: number,
+      fu1: number,
+      fv0: number,
+      fv1: number
+    ) => {
+      if (rng() < 0.07) return;
+      const gap = rand(0.006, 0.014);
+      for (let k = 0; k < stripCount; k++) {
+        const t0 = k / stripCount;
+        const t1 = (k + 1) / stripCount;
+        let poly: Pt[];
+        if (alongU) {
+          poly = cellRect(
+            p00,
+            uVec,
+            vVec,
+            fu0 + (fu1 - fu0) * t0 + gap,
+            fu0 + (fu1 - fu0) * t1 - gap,
+            fv0,
+            fv1
+          );
+        } else {
+          poly = cellRect(
+            p00,
+            uVec,
+            vVec,
+            fu0,
+            fu1,
+            fv0 + (fv1 - fv0) * t0 + gap,
+            fv0 + (fv1 - fv0) * t1 - gap
+          );
+        }
+        buildings.push({
+          poly,
+          color: pickColor(),
+          rounded: rng() < 0.14,
+        });
+      }
+    };
+
+    const innerU0 = sf;
+    const innerU1 = 1 - sf;
+    const innerV0 = stf;
+    const innerV1 = 1 - stf;
+
+    // Нижняя и верхняя улицы — длинные продольные корпуса (большинство).
+    const nAlongU = clamp(Math.round(wM / rand(20, 34)), 2, 7);
+    addSide(true, nAlongU, innerU0, innerU1, innerV0, innerV0 + df);
+    addSide(true, nAlongU, innerU0, innerU1, innerV1 - df, innerV1);
+
+    // Боковые — короче, 1–3 корпуса.
+    const nAlongV = clamp(Math.round(hM / rand(28, 48)), 1, 3);
+    addSide(false, nAlongV, innerU0, innerU0 + dfu, innerV0, innerV1);
+    addSide(false, nAlongV, innerU1 - dfu, innerU1, innerV0, innerV1);
   };
 
   const parks: Pt[][] = [];
@@ -505,30 +616,63 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
           connect(loopNear, inner, false);
         }
 
-        // Корпуса завода.
-        buildings.push({ poly: paramQuad(level, s, 0.28, 0.6, 0.3, 0.7), color: "#8a5f52" });
-        buildings.push({ poly: paramQuad(level, s, 0.64, 0.74, 0.3, 0.56), color: "#77685e" });
+        // Корпуса завода — прямоугольники в локальной сетке ячейки.
+        const f00 = sectionPoint(level, s, 0.2, 0.22);
+        const f10 = sectionPoint(level, s, 0.62, 0.22);
+        const f01 = sectionPoint(level, s, 0.2, 0.72);
+        const fU = { x: f10.x - f00.x, y: f10.y - f00.y };
+        const fV = { x: f01.x - f00.x, y: f01.y - f00.y };
+        buildings.push({ poly: cellRect(f00, fU, fV, 0.05, 0.88, 0.08, 0.92), color: "#8a5f52" });
+        buildings.push({ poly: cellRect(f00, fU, fV, 0.62, 0.92, 0.1, 0.55), color: "#77685e" });
         continue;
       }
 
       if (kind === "airport") {
-        const apron = paramRect(level, s, 0.08, 0.92, 0.08, 0.92);
+        const apron = paramRect(level, s, 0.06, 0.94, 0.06, 0.94);
+        const rw1a = sectionPoint(level, s, 0.08, 0.36);
+        const rw1b = sectionPoint(level, s, 0.92, 0.42);
+        const rw2a = sectionPoint(level, s, 0.1, 0.58);
+        const rw2b = sectionPoint(level, s, 0.9, 0.64);
         const runways: Runway[] = [
-          { a: sectionPoint(level, s, 0.1, 0.38), b: sectionPoint(level, s, 0.9, 0.44), width: 45 },
-          { a: sectionPoint(level, s, 0.12, 0.6), b: sectionPoint(level, s, 0.88, 0.66), width: 38 },
+          { a: rw1a, b: rw1b, width: 48 },
+          { a: rw2a, b: rw2b, width: 40 },
         ];
-        buildings.push({ poly: paramQuad(level, s, 0.34, 0.66, 0.12, 0.2), color: "#9aa6b2" });
-        const termId = addNodeAt(sectionPoint(level, s, 0.5, 0.1));
+        const t00 = sectionPoint(level, s, 0.38, 0.08);
+        const t10 = sectionPoint(level, s, 0.68, 0.08);
+        const t01 = sectionPoint(level, s, 0.38, 0.22);
+        const tU = { x: t10.x - t00.x, y: t10.y - t00.y };
+        const tV = { x: t01.x - t00.x, y: t01.y - t00.y };
+        const terminal = cellRect(t00, tU, tV, 0, 1, 0, 1);
+        const p00 = sectionPoint(level, s, 0.1, 0.08);
+        const p10 = sectionPoint(level, s, 0.34, 0.08);
+        const p01 = sectionPoint(level, s, 0.1, 0.2);
+        const pU = { x: p10.x - p00.x, y: p10.y - p00.y };
+        const pV = { x: p01.x - p00.x, y: p01.y - p00.y };
+        const parking = cellRect(p00, pU, pV, 0, 1, 0, 1);
+        const taxiways: Pt[][] = [
+          [sectionPoint(level, s, 0.52, 0.2), sectionPoint(level, s, 0.48, 0.34), rw1a],
+          [sectionPoint(level, s, 0.54, 0.2), sectionPoint(level, s, 0.52, 0.56), rw2a],
+        ];
+        const tower = sectionPoint(level, s, 0.72, 0.16);
+        const termId = addNodeAt(sectionPoint(level, s, 0.53, 0.1));
         const pT = nodes.get(termId)!;
         const b1 = nearestOf(innerB, pT);
         const b2 = nearestOf(leftB, pT);
         if (b1) connect(termId, b1, true);
         if (b2) connect(termId, b2, true);
-        airports.push({ apron, runways, center: sectionPoint(level, s, 0.5, 0.5) });
+        airports.push({
+          apron,
+          runways,
+          center: sectionPoint(level, s, 0.5, 0.5),
+          terminal,
+          taxiways,
+          tower,
+          parking,
+        });
         continue;
       }
 
-      // ---- Жилая секция: сетка улиц + дома ----
+      // ---- Жилая секция: сетка улиц + кварталы с дворами ----
       const nu = clamp(Math.round(width / blockSize), 1, 9);
       const nv = clamp(Math.round(height / blockSize), 1, 9);
 
@@ -566,20 +710,20 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
         attach(inner.get(`${nu - 1}:${j}`), rightB);
       }
 
-      // дома по ячейкам квартальной сетки
-      const cellW = width / nu;
-      const cellH = height / nv;
-      if (cellW >= 30 && cellH >= 30) {
-        for (let i = 0; i < nu; i++) {
-          for (let j = 0; j < nv; j++) {
-            if (level === 0 && j === 0) continue; // вырожденные ячейки у центра
-            if (rng() < 0.14) continue; // дворы/пустыри
-            const pad = rand(0.14, 0.24);
-            buildings.push({
-              poly: paramQuad(level, s, (i + pad) / nu, (i + 1 - pad) / nu, (j + pad) / nv, (j + 1 - pad) / nv),
-              color: pickColor(),
-            });
-          }
+      // Застройка: микро-кварталы фиксированного размера (~90 м), не зависят от длины сектора.
+      const courtyardCell = clamp(blockSize * 0.65, 75, 105);
+      const bu = clamp(Math.ceil(width / courtyardCell), 1, 28);
+      const bv = clamp(Math.ceil(height / courtyardCell), 1, 28);
+      const padU = rand(0.02, 0.05);
+      const padV = rand(0.02, 0.05);
+      for (let bi = 0; bi < bu; bi++) {
+        for (let bj = 0; bj < bv; bj++) {
+          if (level === 0 && bj === 0 && bi < bu * 0.4) continue;
+          const u0 = padU + (bi / bu) * (1 - 2 * padU);
+          const u1 = padU + ((bi + 1) / bu) * (1 - 2 * padU);
+          const v0 = padV + (bj / bv) * (1 - 2 * padV);
+          const v1 = padV + ((bj + 1) / bv) * (1 - 2 * padV);
+          fillCourtyardBlock(level, s, u0, u1, v0, v1);
         }
       }
     }
@@ -784,6 +928,24 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
     }
   }
 
+  const roads: RoadSegment[] = [];
+  for (const [from, list] of graph) {
+    const a = nodes.get(from)!;
+    for (const edge of list) {
+      if (from >= edge.to) continue;
+      const b = nodes.get(edge.to)!;
+      roads.push({
+        from,
+        to: edge.to,
+        a: { x: a.x, y: a.y },
+        b: { x: b.x, y: b.y },
+        weight: edge.weight,
+        major: edge.major,
+        bridge: edge.bridge,
+      });
+    }
+  }
+
   return {
     nodes,
     graph,
@@ -792,6 +954,7 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
     lakes,
     parks,
     buildings: dryBuildings,
+    roads,
     rails,
     stations,
     airports,
