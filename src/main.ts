@@ -9,7 +9,7 @@ import {
 import { Tutorial } from "./tutorial";
 
 /** Дискретные шаги скорости поиска: вершин в секунду. */
-const SPEED_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+const SPEED_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
 const fmtSpeed = (v: number) => (v < 1 ? v.toString() : String(v));
 
 window.addEventListener("error", (e) =>
@@ -89,6 +89,7 @@ app.innerHTML = /* html */ `
         <button class="btn text" id="btn-tutorial">Обучение</button>
         <button class="btn text" id="btn-export">Экспорт карты (JSON)</button>
         <button class="btn text" id="btn-clear">Очистить всё</button>
+        <a class="btn tonal" href="city/" style="text-align:center; text-decoration:none">Город (A* по графу) →</a>
       </div>
     </section>
   </aside>

@@ -842,7 +842,7 @@ export class GridEditor {
     this.hoverTimer = window.setTimeout(() => {
       const h = Math.abs(cell.x - end.x) + Math.abs(cell.y - end.y);
       this.onCellTooltip({ x: cell.x, y: cell.y, g, h, px, py });
-    }, 500);
+    }, 350);
   }
 
   private emitStats() {
