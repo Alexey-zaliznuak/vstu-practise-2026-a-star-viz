@@ -913,10 +913,9 @@ export class GridEditor {
       this.fillCell(cx, cy, COLORS.path, 0.14);
     }
 
-    // Подпись оценки на клетках — только при медленной скорости (< 1 верш/сек),
-    // когда есть время разглядеть, как алгоритм оценивает каждую вершину.
-    // Показываем f = g + h (приоритет клетки в очереди A*).
-    if (this.searchSpeed < 1 && this.searchEnd && s >= 20) {
+    // Подпись f = g + h (приоритет клетки в очереди A*) на клетках.
+    // Показываем всегда, когда клетка достаточно крупная, чтобы число влезло.
+    if (s >= 26) {
       const end = this.searchEnd;
       ctx.font = `600 ${Math.round(s * 0.3)}px Roboto, sans-serif`;
       ctx.textAlign = "center";
