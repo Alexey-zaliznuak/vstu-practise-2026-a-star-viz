@@ -915,7 +915,7 @@ export class GridEditor {
 
     // Подпись f = g + h (приоритет клетки в очереди A*) на клетках.
     // Показываем всегда, когда клетка достаточно крупная, чтобы число влезло.
-    if (s >= 26) {
+    if (this.searchEnd && s >= 26) {
       const end = this.searchEnd;
       ctx.font = `600 ${Math.round(s * 0.3)}px Roboto, sans-serif`;
       ctx.textAlign = "center";
