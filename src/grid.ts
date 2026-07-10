@@ -89,6 +89,11 @@ export class GridEditor {
   private searchFinished = false;
   private searchFound = false;
 
+  // Оценки алгоритма для подписей на клетках (при медленной скорости):
+  // g — стоимость пути от старта, h считаем до финиша (searchEnd).
+  private searchG = new Map<string, number>();
+  private searchEnd: Cell | null = null;
+
   // Скорость визуализации: сколько вершин обрабатываем в секунду.
   private searchSpeed = 50;
   // Накопитель «дробных» вершин между кадрами (для скоростей < 1 в секунду).
@@ -212,6 +217,8 @@ export class GridEditor {
     this.searchOpen.clear();
     this.searchClosed.clear();
     this.searchPath.clear();
+    this.searchG.clear();
+    this.searchEnd = null;
     this.emitSearch();
     if (rerender) {
       this.render();
@@ -260,6 +267,10 @@ export class GridEditor {
     const dist = new Map<string, number>();
     const cameFrom = new Map<string, string>();
     const heap = new MinHeap();
+
+    // Делимся ссылкой с рендером, чтобы рисовать оценки g/h на клетках.
+    this.searchG = dist;
+    this.searchEnd = end;
 
     const heuristic = (x: number, y: number) =>
       Math.abs(x - end.x) + Math.abs(y - end.y);
@@ -848,6 +859,28 @@ export class GridEditor {
       if (!inView(k)) continue;
       const [cx, cy] = k.split(",").map(Number);
       this.fillCell(cx, cy, COLORS.path, 0.14);
+    }
+
+    // Подписи оценок g+h на клетках — только при медленной скорости (< 1 верш/сек),
+    // когда есть время разглядеть, как алгоритм оценивает каждую вершину.
+    if (this.searchSpeed < 1 && this.searchEnd && s >= 26) {
+      const end = this.searchEnd;
+      ctx.font = `600 ${Math.round(s * 0.24)}px Roboto, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(28, 27, 31, 0.85)";
+      const drawScore = (k: string) => {
+        if (!inView(k)) return;
+        const g = this.searchG.get(k);
+        if (g === undefined) return;
+        const [cx, cy] = k.split(",").map(Number);
+        const hh = Math.abs(cx - end.x) + Math.abs(cy - end.y);
+        const px = this.offsetX + cx * s + s / 2;
+        const py = this.offsetY + cy * s + s / 2;
+        ctx.fillText(`${g}+${hh}`, px, py);
+      };
+      for (const k of this.searchClosed) drawScore(k);
+      for (const k of this.searchOpen) drawScore(k);
     }
 
     // Стены

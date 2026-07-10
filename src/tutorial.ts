@@ -149,12 +149,11 @@ export class Tutorial {
         <h3 class="tut-title"></h3>
         <p class="tut-text"></p>
         <div class="tut-actions">
-          <button class="tut-btn tut-skip" type="button">Пропустить</button>
           <span class="tut-progress"></span>
-          <div class="tut-nav">
-            <button class="tut-btn tut-back" type="button">Назад</button>
-            <button class="tut-btn tut-next" type="button">Далее</button>
-          </div>
+          <span class="tut-spacer"></span>
+          <button class="tut-btn tut-skip" type="button">Пропустить</button>
+          <button class="tut-btn tut-back" type="button">Назад</button>
+          <button class="tut-btn tut-next" type="button">Далее</button>
         </div>
       </div>
     `;
