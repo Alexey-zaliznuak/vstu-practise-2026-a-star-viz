@@ -231,8 +231,13 @@ document
   .addEventListener("click", () => tutorial.start());
 
 // Первый визит — запускаем обучение автоматически.
-if (!localStorage.getItem("astar_tutorial_done")) {
+const tutorialDone = localStorage.getItem("astar_tutorial_done");
+console.log("[tutorial] флаг astar_tutorial_done =", tutorialDone);
+if (!tutorialDone) {
+  console.log("[tutorial] первый визит — запускаем обучение");
   tutorial.start();
+} else {
+  console.log("[tutorial] обучение уже пройдено, авто-старт пропущен");
 }
 
 document

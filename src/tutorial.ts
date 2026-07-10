@@ -123,9 +123,19 @@ export class Tutorial {
   }
 
   start() {
+    console.log("[tutorial] start(): шагов =", this.steps.length);
     this.index = 0;
-    if (!this.root) this.build();
+    if (!this.root) {
+      console.log("[tutorial] строим DOM оверлея");
+      this.build();
+    }
     this.root!.style.display = "block";
+    console.log(
+      "[tutorial] root добавлен в DOM =",
+      document.body.contains(this.root),
+      "display =",
+      this.root!.style.display
+    );
     window.addEventListener("resize", this.onResize);
     this.show();
   }
@@ -166,6 +176,9 @@ export class Tutorial {
 
   private show() {
     const step = this.steps[this.index];
+    console.log(
+      `[tutorial] show(): шаг ${this.index + 1}/${this.steps.length} — "${step.title}"`
+    );
     step.onEnter?.();
 
     this.card.querySelector(".tut-title")!.textContent = step.title;
@@ -192,6 +205,14 @@ export class Tutorial {
     const step = this.steps[this.index];
     const target = step.target?.() ?? null;
     const pad = 8;
+    console.log(
+      "[tutorial] layout(): target =",
+      target,
+      "card size =",
+      this.card.offsetWidth,
+      "x",
+      this.card.offsetHeight
+    );
 
     if (target) {
       const r = target.getBoundingClientRect();
