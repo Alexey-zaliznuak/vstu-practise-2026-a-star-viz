@@ -4,6 +4,7 @@ import {
   type Tool,
   type GridStats,
   type SearchState,
+  type CellTooltip,
 } from "./grid";
 import { Tutorial } from "./tutorial";
 
@@ -67,7 +68,7 @@ app.innerHTML = /* html */ `
           Скорость
           <span class="value" id="speed-val">50 в/с</span>
         </label>
-        <input type="range" id="speed" min="0" max="12" step="1" value="8" />
+        <input type="range" id="speed" class="slider" min="0" max="12" step="1" value="8" />
       </div>
       <div class="btn-col">
         <button class="btn primary" id="btn-search">Запустить A*</button>
@@ -80,7 +81,10 @@ app.innerHTML = /* html */ `
       <h2>Действия</h2>
       <div class="btn-col">
         <button class="btn tonal" id="btn-maze">Сгенерировать лабиринт</button>
-        <button class="btn tonal" id="btn-random">Случайная карта</button>
+        <div class="btn-row">
+          <button class="btn tonal grow" id="btn-random">Случайная карта</button>
+          <button class="btn tonal icon-btn" id="btn-random-settings" title="Настройки случайной карты" aria-label="Настройки случайной карты">⚙</button>
+        </div>
         <button class="btn tonal" id="btn-reset-view">Центрировать поле</button>
         <button class="btn text" id="btn-tutorial">Обучение</button>
         <button class="btn text" id="btn-export">Экспорт карты (JSON)</button>
@@ -88,6 +92,24 @@ app.innerHTML = /* html */ `
       </div>
     </section>
   </aside>
+
+  <div class="modal-overlay" id="modal-random" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-random-title">
+      <h2 id="modal-random-title">Настройки случайной карты</h2>
+      <div class="speed-row">
+        <label class="speed-label" for="rand-size">
+          Размер поля
+          <span class="value" id="rand-size-val">101 × 101</span>
+        </label>
+        <input type="range" id="rand-size" class="slider" min="5" max="201" step="2" value="101" />
+      </div>
+      <p class="hint">Карта будет квадратом size × size клеток. Старт и финиш ставятся в противоположных углах.</p>
+      <div class="btn-row" style="margin-top: 16px">
+        <button class="btn primary grow" id="rand-apply">Сгенерировать</button>
+        <button class="btn text" id="rand-close">Закрыть</button>
+      </div>
+    </div>
+  </div>
 
   <main class="board" id="board">
     <div class="palette" id="palette">
@@ -98,6 +120,7 @@ app.innerHTML = /* html */ `
     </div>
     <canvas id="grid"></canvas>
     <div class="coords" id="coords">—</div>
+    <div class="cell-tip" id="cell-tip" hidden></div>
   </main>
 `;
 
@@ -170,6 +193,35 @@ editor.onSearch = (s: SearchState) => {
 
 editor.onPanState = (panning) => board.classList.toggle("panning", panning);
 
+// ---- Подсказка по клетке (появляется при наведении с задержкой) ----
+const cellTip = document.querySelector<HTMLDivElement>("#cell-tip")!;
+editor.onCellTooltip = (info: CellTooltip | null) => {
+  if (!info) {
+    cellTip.setAttribute("hidden", "");
+    return;
+  }
+  const f = info.g + info.h;
+  cellTip.innerHTML = /* html */ `
+    <div class="cell-tip-row"><b>${info.g}</b> — уже найденный минимальный путь от старта до этой клетки (g)</div>
+    <div class="cell-tip-row"><b>${info.h}</b> — эвристика: оценка оставшегося расстояния до финиша (h, манхэттен)</div>
+    <div class="cell-tip-row muted">f = g + h = ${f} — приоритет клетки в очереди A*</div>
+  `;
+  cellTip.removeAttribute("hidden");
+  // Позиционируем рядом с курсором и прижимаем к границам доски.
+  const bw = board.clientWidth;
+  const bh = board.clientHeight;
+  const tw = cellTip.offsetWidth;
+  const th = cellTip.offsetHeight;
+  let left = info.px + 16;
+  let top = info.py + 16;
+  if (left + tw > bw - 8) left = info.px - tw - 16;
+  if (top + th > bh - 8) top = info.py - th - 16;
+  left = Math.max(8, left);
+  top = Math.max(8, top);
+  cellTip.style.left = `${left}px`;
+  cellTip.style.top = `${top}px`;
+};
+
 // ---- Кнопки ----
 document
   .querySelector<HTMLButtonElement>("#btn-search")!
@@ -186,9 +238,46 @@ document
   .querySelector<HTMLButtonElement>("#btn-maze")!
   .addEventListener("click", () => editor.generateMaze());
 
+// Размер случайной карты (сторона квадрата в клетках).
+let randomSize = 101;
 document
   .querySelector<HTMLButtonElement>("#btn-random")!
-  .addEventListener("click", () => editor.generateRandom());
+  .addEventListener("click", () => editor.generateRandom(0.28, randomSize));
+
+// ---- Модалка настроек случайной карты ----
+const randModal = document.querySelector<HTMLDivElement>("#modal-random")!;
+const randSizeInput = document.querySelector<HTMLInputElement>("#rand-size")!;
+const randSizeVal = document.querySelector<HTMLSpanElement>("#rand-size-val")!;
+
+const updateRandSize = () => {
+  randomSize = Number(randSizeInput.value);
+  randSizeVal.textContent = `${randomSize} × ${randomSize}`;
+};
+randSizeInput.addEventListener("input", updateRandSize);
+updateRandSize();
+
+const openRandModal = () => randModal.removeAttribute("hidden");
+const closeRandModal = () => randModal.setAttribute("hidden", "");
+
+document
+  .querySelector<HTMLButtonElement>("#btn-random-settings")!
+  .addEventListener("click", openRandModal);
+document
+  .querySelector<HTMLButtonElement>("#rand-close")!
+  .addEventListener("click", closeRandModal);
+document
+  .querySelector<HTMLButtonElement>("#rand-apply")!
+  .addEventListener("click", () => {
+    editor.generateRandom(0.28, randomSize);
+    closeRandModal();
+  });
+// Клик по затемнению вне карточки — закрыть.
+randModal.addEventListener("click", (e) => {
+  if (e.target === randModal) closeRandModal();
+});
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !randModal.hasAttribute("hidden")) closeRandModal();
+});
 
 document
   .querySelector<HTMLButtonElement>("#btn-reset-view")!

@@ -28,6 +28,17 @@ export interface MapExport {
   walls: [number, number][];
 }
 
+/** Данные для всплывающей подсказки по клетке, обработанной алгоритмом. */
+export interface CellTooltip {
+  x: number;
+  y: number;
+  g: number; // длина уже найденного минимального пути от старта
+  h: number; // эвристика (манхэттен) до финиша
+  /** Позиция курсора относительно холста (в CSS-пикселях). */
+  px: number;
+  py: number;
+}
+
 const COLORS = {
   bg: "#fbfaff",
   line: "#ece7f6",
@@ -68,6 +79,8 @@ export class GridEditor {
   private readonly maxCell = 120;
 
   private hover: Cell | null = null;
+  private hoverKey: string | null = null;
+  private hoverTimer = 0;
   private tool: Tool | null = "wall";
 
   // Панорамирование / рисование
@@ -103,6 +116,8 @@ export class GridEditor {
   onStats: (s: GridStats) => void = () => {};
   onPanState: (panning: boolean) => void = () => {};
   onSearch: (s: SearchState) => void = () => {};
+  // null — скрыть подсказку
+  onCellTooltip: (info: CellTooltip | null) => void = () => {};
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -219,6 +234,7 @@ export class GridEditor {
     this.searchPath.clear();
     this.searchG.clear();
     this.searchEnd = null;
+    this.clearTooltip();
     this.emitSearch();
     if (rerender) {
       this.render();
@@ -685,6 +701,7 @@ export class GridEditor {
       this.hover = cell;
 
       if (this.isPanning) {
+        this.clearTooltip();
         this.offsetX += p.x - this.lastPointer.x;
         this.offsetY += p.y - this.lastPointer.y;
         this.lastPointer = p;
@@ -700,6 +717,15 @@ export class GridEditor {
           return;
         }
       }
+
+      // Подсказка по клетке: перезапускаем таймер только при смене клетки,
+      // чтобы она появлялась после «зависания» курсора на месте (~0.5с).
+      const k = key(cell.x, cell.y);
+      if (k !== this.hoverKey) {
+        this.hoverKey = k;
+        this.scheduleTooltip(cell, p.x, p.y);
+      }
+
       this.render();
       this.emitStats();
     });
@@ -723,6 +749,8 @@ export class GridEditor {
 
     c.addEventListener("pointerleave", () => {
       this.hover = null;
+      this.hoverKey = null;
+      this.clearTooltip();
       this.render();
       this.emitStats();
     });
@@ -793,6 +821,30 @@ export class GridEditor {
     this.emitStats();
   }
 
+  /** Прячет подсказку и сбрасывает таймер наведения. */
+  private clearTooltip() {
+    if (this.hoverTimer) {
+      clearTimeout(this.hoverTimer);
+      this.hoverTimer = 0;
+    }
+    this.onCellTooltip(null);
+  }
+
+  /**
+   * Запускает таймер: если курсор простоит на клетке ~0.5с и у клетки есть
+   * оценка алгоритма (g), покажем подсказку с пояснением про g и h.
+   */
+  private scheduleTooltip(cell: Cell, px: number, py: number) {
+    this.clearTooltip();
+    const g = this.searchG.get(key(cell.x, cell.y));
+    if (g === undefined || !this.searchEnd) return;
+    const end = this.searchEnd;
+    this.hoverTimer = window.setTimeout(() => {
+      const h = Math.abs(cell.x - end.x) + Math.abs(cell.y - end.y);
+      this.onCellTooltip({ x: cell.x, y: cell.y, g, h, px, py });
+    }, 500);
+  }
+
   private emitStats() {
     this.onStats({
       start: this.start,
@@ -861,11 +913,12 @@ export class GridEditor {
       this.fillCell(cx, cy, COLORS.path, 0.14);
     }
 
-    // Подписи оценок g+h на клетках — только при медленной скорости (< 1 верш/сек),
+    // Подпись оценки на клетках — только при медленной скорости (< 1 верш/сек),
     // когда есть время разглядеть, как алгоритм оценивает каждую вершину.
-    if (this.searchSpeed < 1 && this.searchEnd && s >= 26) {
+    // Показываем f = g + h (приоритет клетки в очереди A*).
+    if (this.searchSpeed < 1 && this.searchEnd && s >= 20) {
       const end = this.searchEnd;
-      ctx.font = `600 ${Math.round(s * 0.24)}px Roboto, sans-serif`;
+      ctx.font = `600 ${Math.round(s * 0.3)}px Roboto, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       ctx.fillStyle = "rgba(28, 27, 31, 0.85)";
@@ -877,7 +930,7 @@ export class GridEditor {
         const hh = Math.abs(cx - end.x) + Math.abs(cy - end.y);
         const px = this.offsetX + cx * s + s / 2;
         const py = this.offsetY + cy * s + s / 2;
-        ctx.fillText(`${g}+${hh}`, px, py);
+        ctx.fillText(`${g + hh}`, px, py);
       };
       for (const k of this.searchClosed) drawScore(k);
       for (const k of this.searchOpen) drawScore(k);

@@ -234,7 +234,7 @@ body {
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
-input[type="range"]#speed {
+input[type="range"].slider {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
@@ -244,7 +244,7 @@ input[type="range"]#speed {
   outline: none;
   cursor: pointer;
 }
-input[type="range"]#speed::-webkit-slider-thumb {
+input[type="range"].slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 20px;
@@ -254,13 +254,60 @@ input[type="range"]#speed::-webkit-slider-thumb {
   border: 3px solid #fff;
   box-shadow: var(--shadow);
 }
-input[type="range"]#speed::-moz-range-thumb {
+input[type="range"].slider::-moz-range-thumb {
   width: 18px;
   height: 18px;
   border-radius: 50%;
   background: var(--primary);
   border: 3px solid #fff;
   box-shadow: var(--shadow);
+}
+
+/* Строка кнопок: основная растягивается, иконка — квадратная справа */
+.btn-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+.btn.grow {
+  flex: 1 1 auto;
+}
+.btn.icon-btn {
+  flex: 0 0 auto;
+  width: 46px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* ---------- Модальное окно ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(20, 18, 34, 0.5);
+}
+.modal-overlay[hidden] {
+  display: none;
+}
+.modal {
+  width: min(380px, calc(100vw - 32px));
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 22px;
+  box-shadow: var(--shadow-lift);
+}
+.modal h2 {
+  margin: 0 0 16px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
 }
 
 /* ---------- Обучение (онбординг) ---------- */
@@ -445,6 +492,34 @@ input[type="range"]#speed::-moz-range-thumb {
   font-variant-numeric: tabular-nums;
   z-index: 5;
   pointer-events: none;
+}
+
+/* Подсказка по клетке при наведении */
+.cell-tip {
+  position: absolute;
+  z-index: 6;
+  max-width: 260px;
+  background: rgba(28, 27, 31, 0.92);
+  color: #fff;
+  font-size: 12.5px;
+  line-height: 1.4;
+  padding: 10px 12px;
+  border-radius: 12px;
+  box-shadow: var(--shadow-lift);
+  pointer-events: none;
+}
+.cell-tip[hidden] {
+  display: none;
+}
+.cell-tip-row + .cell-tip-row {
+  margin-top: 6px;
+}
+.cell-tip b {
+  color: #ffd600;
+  font-variant-numeric: tabular-nums;
+}
+.cell-tip .muted {
+  color: rgba(255, 255, 255, 0.7);
 }
 
 /* ---------- Мобильная вёрстка ---------- */
