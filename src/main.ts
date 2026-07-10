@@ -11,6 +11,11 @@ import { Tutorial } from "./tutorial";
 const SPEED_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
 const fmtSpeed = (v: number) => (v < 1 ? v.toString() : String(v));
 
+window.addEventListener("error", (e) =>
+  console.error("[global] необработанная ошибка:", e.message, e.error)
+);
+console.log("[main] скрипт загружен");
+
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
 app.innerHTML = /* html */ `
