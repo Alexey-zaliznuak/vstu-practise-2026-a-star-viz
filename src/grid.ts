@@ -89,6 +89,12 @@ export class GridEditor {
   private searchFinished = false;
   private searchFound = false;
 
+  // Скорость визуализации: сколько вершин обрабатываем в секунду.
+  private searchSpeed = 50;
+  // Накопитель «дробных» вершин между кадрами (для скоростей < 1 в секунду).
+  private searchAccumulator = 0;
+  private searchLastTime = 0;
+
   onStats: (s: GridStats) => void = () => {};
   onPanState: (panning: boolean) => void = () => {};
   onSearch: (s: SearchState) => void = () => {};
@@ -109,6 +115,11 @@ export class GridEditor {
 
   setTool(tool: Tool | null) {
     this.tool = tool;
+  }
+
+  /** Скорость визуализации поиска в «вершинах в секунду». Можно менять на ходу. */
+  setSpeed(verticesPerSecond: number) {
+    this.searchSpeed = Math.max(0.01, verticesPerSecond);
   }
 
   // ---------- Геометрия ----------
@@ -312,11 +323,35 @@ export class GridEditor {
       return true;
     };
 
-    // Анимация: несколько шагов за кадр, чтобы было видно распространение волны.
-    const animate = () => {
-      const stepsPerFrame = 6;
+    // Анимация с привязкой ко времени: за кадр обрабатываем столько вершин,
+    // сколько «набежало» исходя из выбранной скорости (searchSpeed, верш/сек).
+    // Дробный остаток копим в searchAccumulator — так поддерживаются и очень
+    // медленные скорости (< 1 верш/сек), и очень быстрые (до 1000 верш/сек).
+    this.searchAccumulator = 0;
+    this.searchLastTime = 0;
+    // Защита от «взрыва» количества шагов за один кадр (например, после того как
+    // вкладка была неактивной и dt оказался большим).
+    const MAX_STEPS_PER_FRAME = 2000;
+
+    const animate = (now: number) => {
+      if (!this.searchLastTime) this.searchLastTime = now;
+      // dt ограничиваем сверху, чтобы после паузы не было резкого скачка.
+      const dt = Math.min(0.1, (now - this.searchLastTime) / 1000);
+      this.searchLastTime = now;
+      this.searchAccumulator += dt * this.searchSpeed;
+
       let alive = true;
-      for (let i = 0; i < stepsPerFrame && alive; i++) alive = step();
+      let done = 0;
+      while (
+        this.searchAccumulator >= 1 &&
+        alive &&
+        done < MAX_STEPS_PER_FRAME
+      ) {
+        alive = step();
+        this.searchAccumulator -= 1;
+        done++;
+      }
+
       this.render();
       this.emitSearch();
       if (alive) {
@@ -338,34 +373,101 @@ export class GridEditor {
     }
   }
 
-  /** Случайная карта в квадрате [-50..50] x [-50..50]. */
-  generateRandom(density = 0.28) {
+  /**
+   * Случайная карта в квадрате size×size клеток (по умолчанию 101×101).
+   * Старт и финиш ставятся в противоположных углах, чтобы путь был подлиннее.
+   * @param density доля клеток-стен (0..1)
+   * @param size сторона квадрата в клетках
+   * @param ensurePath гарантировать существование пути старт→финиш
+   *   (перегенерация, а в крайнем случае — прорытие коридора)
+   */
+  generateRandom(density = 0.28, size = 101, ensurePath = false) {
     this.clearSearch(false);
     this.walls.clear();
     this.start = null;
     this.end = null;
 
-    const min = -50;
-    const max = 50;
+    const half = Math.floor(size / 2);
+    const min = -half;
+    const max = min + size - 1;
     const rnd = (lo: number, hi: number) =>
       Math.floor(Math.random() * (hi - lo + 1)) + lo;
 
-    // старт и финиш — в разных углах, чтобы путь был подлиннее
-    this.start = { x: rnd(min, -20), y: rnd(min, -20) };
-    this.end = { x: rnd(20, max), y: rnd(20, max) };
+    // область для углов — примерно 20% стороны (минимум одна клетка)
+    const corner = Math.max(1, Math.floor(size * 0.2));
+    this.start = { x: rnd(min, min + corner), y: rnd(min, min + corner) };
+    this.end = { x: rnd(max - corner, max), y: rnd(max - corner, max) };
 
-    for (let x = min; x <= max; x++) {
-      for (let y = min; y <= max; y++) {
-        if (Math.random() >= density) continue;
-        if (x === this.start.x && y === this.start.y) continue;
-        if (x === this.end.x && y === this.end.y) continue;
-        this.walls.add(key(x, y));
+    const fillWalls = () => {
+      this.walls.clear();
+      for (let x = min; x <= max; x++) {
+        for (let y = min; y <= max; y++) {
+          if (Math.random() >= density) continue;
+          if (x === this.start!.x && y === this.start!.y) continue;
+          if (x === this.end!.x && y === this.end!.y) continue;
+          this.walls.add(key(x, y));
+        }
       }
+    };
+
+    fillWalls();
+
+    if (ensurePath) {
+      // Несколько попыток получить проходимую карту случайно…
+      const MAX_ATTEMPTS = 40;
+      let attempts = 0;
+      while (!this.hasPath(min, min, max, max) && attempts < MAX_ATTEMPTS) {
+        fillWalls();
+        attempts++;
+      }
+      // …иначе просто прорываем гарантированный коридор старт→финиш.
+      if (!this.hasPath(min, min, max, max)) this.carveCorridor();
     }
 
     this.fitToBounds(min, min, max, max);
     this.render();
     this.emitStats();
+  }
+
+  /** BFS: существует ли путь старт→финиш по пустым клеткам в пределах рамки. */
+  private hasPath(minX: number, minY: number, maxX: number, maxY: number): boolean {
+    if (!this.start || !this.end) return false;
+    const startKey = key(this.start.x, this.start.y);
+    const endKey = key(this.end.x, this.end.y);
+    if (startKey === endKey) return true;
+
+    const visited = new Set<string>([startKey]);
+    const queue: [number, number][] = [[this.start.x, this.start.y]];
+    let head = 0;
+    while (head < queue.length) {
+      const [cx, cy] = queue[head++];
+      const steps: [number, number][] = [
+        [cx + 1, cy],
+        [cx - 1, cy],
+        [cx, cy + 1],
+        [cx, cy - 1],
+      ];
+      for (const [nx, ny] of steps) {
+        if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+        const nk = key(nx, ny);
+        if (visited.has(nk) || this.walls.has(nk)) continue;
+        if (nk === endKey) return true;
+        visited.add(nk);
+        queue.push([nx, ny]);
+      }
+    }
+    return false;
+  }
+
+  /** Прорывает Г-образный коридор от старта к финишу (стирает стены на пути). */
+  private carveCorridor() {
+    if (!this.start || !this.end) return;
+    const { x: sx, y: sy } = this.start;
+    const { x: ex, y: ey } = this.end;
+    const stepX = Math.sign(ex - sx) || 1;
+    for (let x = sx; x !== ex + stepX; x += stepX) this.walls.delete(key(x, sy));
+    const stepY = Math.sign(ey - sy) || 1;
+    for (let y = sy; y !== ey + stepY; y += stepY) this.walls.delete(key(ex, y));
   }
 
   /**

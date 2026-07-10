@@ -5,6 +5,11 @@ import {
   type GridStats,
   type SearchState,
 } from "./grid";
+import { Tutorial } from "./tutorial";
+
+/** Дискретные шаги скорости поиска: вершин в секунду. */
+const SPEED_STEPS = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+const fmtSpeed = (v: number) => (v < 1 ? v.toString() : String(v));
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -52,6 +57,13 @@ app.innerHTML = /* html */ `
 
     <section class="card">
       <h2>Поиск пути (A*, манхэттен)</h2>
+      <div class="speed-row">
+        <label class="speed-label" for="speed">
+          Скорость
+          <span class="value" id="speed-val">50 в/с</span>
+        </label>
+        <input type="range" id="speed" min="0" max="12" step="1" value="8" />
+      </div>
       <div class="btn-col">
         <button class="btn primary" id="btn-search">Запустить A*</button>
         <button class="btn text" id="btn-clear-search">Сбросить поиск</button>
@@ -65,6 +77,7 @@ app.innerHTML = /* html */ `
         <button class="btn tonal" id="btn-maze">Сгенерировать лабиринт</button>
         <button class="btn tonal" id="btn-random">Случайная карта</button>
         <button class="btn tonal" id="btn-reset-view">Центрировать поле</button>
+        <button class="btn text" id="btn-tutorial">Обучение</button>
         <button class="btn text" id="btn-export">Экспорт карты (JSON)</button>
         <button class="btn text" id="btn-clear">Очистить всё</button>
       </div>
@@ -179,6 +192,48 @@ document
 document
   .querySelector<HTMLButtonElement>("#btn-clear")!
   .addEventListener("click", () => editor.clearAll());
+
+// ---- Слайдер скорости ----
+const speedInput = document.querySelector<HTMLInputElement>("#speed")!;
+const speedVal = document.querySelector<HTMLSpanElement>("#speed-val")!;
+
+const applySpeed = (idx: number) => {
+  const v = SPEED_STEPS[idx] ?? 50;
+  editor.setSpeed(v);
+  speedVal.textContent = `${fmtSpeed(v)} в/с`;
+};
+speedInput.addEventListener("input", () =>
+  applySpeed(Number(speedInput.value))
+);
+applySpeed(Number(speedInput.value));
+
+/** Программно выставить скорость по значению (верш/сек) — для обучения. */
+const setSpeedByValue = (value: number) => {
+  const idx = SPEED_STEPS.indexOf(value);
+  if (idx < 0) return;
+  speedInput.value = String(idx);
+  applySpeed(idx);
+};
+
+// ---- Обучение ----
+const tutorial = new Tutorial(editor, {
+  onGenerateMap: () => editor.generateRandom(0.28, 15, true),
+  onSetSpeed: setSpeedByValue,
+  onRunSearch: () => {
+    const res = editor.startSearch();
+    if (!res.ok)
+      el.searchStatus.textContent = res.reason ?? "Не удалось запустить поиск";
+  },
+});
+
+document
+  .querySelector<HTMLButtonElement>("#btn-tutorial")!
+  .addEventListener("click", () => tutorial.start());
+
+// Первый визит — запускаем обучение автоматически.
+if (!localStorage.getItem("astar_tutorial_done")) {
+  tutorial.start();
+}
 
 document
   .querySelector<HTMLButtonElement>("#btn-export")!
