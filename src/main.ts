@@ -87,7 +87,6 @@ app.innerHTML = /* html */ `
         </div>
         <button class="btn tonal" id="btn-reset-view">Центрировать поле</button>
         <button class="btn text" id="btn-tutorial">Обучение</button>
-        <button class="btn text" id="btn-export">Экспорт карты (JSON)</button>
         <button class="btn text" id="btn-clear">Очистить всё</button>
         <a class="btn tonal" href="city/" style="text-align:center; text-decoration:none">Город (A* по графу) →</a>
       </div>
