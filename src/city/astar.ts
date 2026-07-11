@@ -5,9 +5,15 @@ export interface AStarResult {
   cost: number;
 }
 
-/** Евклидова эвристика (допустимая: вес ребра = евклидова длина). */
-export function heuristic(a: CityNode, b: CityNode): number {
-  return Math.hypot(b.x - a.x, b.y - a.y);
+/**
+ * Евклидова эвристика, масштабированная минимальным множителем веса `hScale`.
+ * Магистрали «дешевле» своей длины (вес = длина × majorFactor), поэтому
+ * минимальная стоимость единицы длины равна majorFactor. Чтобы эвристика
+ * оставалась допустимой (не переоценивала остаток пути), её нужно умножить
+ * на этот же коэффициент — иначе A* может вернуть неоптимальный маршрут.
+ */
+export function heuristic(a: CityNode, b: CityNode, hScale = 1): number {
+  return Math.hypot(b.x - a.x, b.y - a.y) * hScale;
 }
 
 /**
@@ -31,12 +37,14 @@ export class AStarRunner {
     private graph: Map<string, Edge[]>,
     private nodes: Map<string, CityNode>,
     startId: string,
-    private goalId: string
+    private goalId: string,
+    /** Множитель эвристики для сохранения допустимости (обычно = majorFactor). */
+    private hScale = 1
   ) {
     this.gScore.set(startId, 0);
     this.fScore.set(
       startId,
-      heuristic(nodes.get(startId)!, nodes.get(goalId)!)
+      heuristic(nodes.get(startId)!, nodes.get(goalId)!, hScale)
     );
     this.open.add(startId);
   }
@@ -87,7 +95,8 @@ export class AStarRunner {
         this.gScore.set(edge.to, tentative);
         this.fScore.set(
           edge.to,
-          tentative + heuristic(this.nodes.get(edge.to)!, this.nodes.get(this.goalId)!)
+          tentative +
+            heuristic(this.nodes.get(edge.to)!, this.nodes.get(this.goalId)!, this.hScale)
         );
         this.open.add(edge.to);
       }
@@ -116,9 +125,10 @@ export function astar(
   graph: Map<string, Edge[]>,
   nodes: Map<string, CityNode>,
   startId: string,
-  goalId: string
+  goalId: string,
+  hScale = 1
 ): AStarResult {
-  const runner = new AStarRunner(graph, nodes, startId, goalId);
+  const runner = new AStarRunner(graph, nodes, startId, goalId, hScale);
   while (runner.step()) {
     /* крутим до завершения */
   }

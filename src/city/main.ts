@@ -38,6 +38,7 @@ const PARAMS: ParamDef[] = [
   { key: "lakeShare", label: "Озёра", min: 0, max: 30, step: 1, toOption: (v) => v / 100, fmt: pct },
   { key: "factoryShare", label: "Заводы", min: 0, max: 40, step: 2, toOption: (v) => v / 100, fmt: pct },
   { key: "dropProbability", label: "Обрывы улиц (тупики)", min: 0, max: 40, step: 5, toOption: (v) => v / 100, fmt: pct },
+  { key: "majorFactor", label: "Преимущество магистралей", min: 20, max: 80, step: 5, toOption: (v) => v / 100, fmt: (v) => `×${(v / 100).toFixed(2)}` },
 ];
 
 /** UI-значение по умолчанию (обратное преобразование из CITY_DEFAULTS). */
@@ -241,7 +242,10 @@ const el = {
   searchStatus: document.querySelector<HTMLParagraphElement>("#search-status")!,
 };
 
+let currentMajorFactor = CITY_DEFAULTS.majorFactor;
+
 city.onStats = (s: CityStats) => {
+  currentMajorFactor = s.majorFactor;
   el.nodes.textContent = String(s.nodes);
   el.edges.textContent = String(s.edges);
   el.seed.textContent = String(s.seed);
@@ -262,7 +266,7 @@ city.onRoadInfo = (info: RoadInfo | null) => {
     <div class="cell-tip-row"><b>${roadKind(info)}</b> · ${info.from} → ${info.to}</div>
     <div class="cell-tip-row">Длина: <b>${len}</b> м</div>
     <div class="cell-tip-row">Вес для A*: <b>${w}</b> усл.ед.</div>
-    <div class="cell-tip-row muted">Магистраль ×0.88, мост ×1.12</div>
+    <div class="cell-tip-row muted">Магистраль ×${currentMajorFactor.toFixed(2)}, мост ×1.12</div>
   `;
   roadTip.removeAttribute("hidden");
   placeRoadTip(info);

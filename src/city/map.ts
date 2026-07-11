@@ -14,6 +14,8 @@ export interface CityStats {
   scalePercent: number;
   hoverId: string | null;
   seed: number;
+  /** Действующий множитель веса магистрали (для подсказок в UI). */
+  majorFactor: number;
 }
 
 /** Информация о дороге под курсором / по клику. */
@@ -220,7 +222,7 @@ export class CityMap {
       const nb = this.data.nodes.get(b)!;
       // хотим, чтобы точки были подальше друг от друга — интереснее путь
       if (Math.hypot(nb.x - na.x, nb.y - na.y) < minSpan) continue;
-      if (astar(this.data.graph, this.data.nodes, a, b).path) {
+      if (astar(this.data.graph, this.data.nodes, a, b, this.data.majorFactor).path) {
         this.startId = a;
         this.goalId = b;
         return;
@@ -371,7 +373,8 @@ export class CityMap {
       this.data.graph,
       this.data.nodes,
       this.startId,
-      this.goalId
+      this.goalId,
+      this.data.majorFactor
     );
     this.searchRunning = true;
     this.searchAccumulator = 0;
@@ -430,6 +433,7 @@ export class CityMap {
       scalePercent: Math.round(this.scale * 100),
       hoverId: this.hoverId,
       seed: this.data.seed,
+      majorFactor: this.data.majorFactor,
     });
   }
 

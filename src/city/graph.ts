@@ -94,6 +94,8 @@ export interface CityGraph {
   airports: Airport[];
   bounds: { minX: number; minY: number; maxX: number; maxY: number };
   seed: number;
+  /** Множитель веса магистрали, применённый при генерации (см. CityParams). */
+  majorFactor: number;
 }
 
 /** Полный набор параметров генератора (см. CITY_DEFAULTS). */
@@ -128,6 +130,12 @@ export interface CityParams {
   factoryShare: number;
   /** Вероятность обрыва мелкой улицы (тупики). */
   dropProbability: number;
+  /**
+   * Множитель веса магистрали (0.2..0.8): во сколько раз проезд по магистрали
+   * «дешевле» её геометрической длины. Чем меньше — тем сильнее A* предпочитает
+   * магистрали объезду по мелким улицам.
+   */
+  majorFactor: number;
 }
 
 export const CITY_DEFAULTS: CityParams = {
@@ -146,6 +154,7 @@ export const CITY_DEFAULTS: CityParams = {
   lakeShare: 0.07,
   factoryShare: 0.12,
   dropProbability: 0.1,
+  majorFactor: 0.6,
 };
 
 export type CityOptions = Partial<CityParams> & { seed?: number };
@@ -193,6 +202,7 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
   const LV = rings + 1; // уровень граничной магистрали
   const blockSize = Math.max(60, o.blockSize);
   const drop = clamp(o.dropProbability, 0, 0.6);
+  const majorFactor = clamp(o.majorFactor, 0.2, 0.8);
 
   // ======================= 1. Каркас: кольца и радиусы =======================
 
@@ -279,7 +289,7 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
     const dist = Math.hypot(b.x - a.x, b.y - a.y);
     // Вес = длина в метрах; магистрали чуть «дешевле», мосты — чуть дороже.
     let weight = dist;
-    if (major) weight *= 0.88;
+    if (major) weight *= majorFactor;
     if (bridge) weight *= 1.12;
     graph.get(aId)!.push({ to: bId, weight, major, bridge });
     graph.get(bId)!.push({ to: aId, weight, major, bridge });
@@ -523,13 +533,11 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
   const buildings: Building[] = [];
   const airports: Airport[] = [];
 
-  // Дома фиксированного размера (~квартал 120 м). На гигантских картах их
-  // влезли бы миллионы — прореживаем застройку под общий бюджет, иначе
-  // генерация и рендер захлёбываются.
-  const COURTYARD_PITCH = 118;
-  const COURTYARD_BUDGET = 3500;
-  const estCourtyards = (S * S * 0.45) / (COURTYARD_PITCH * COURTYARD_PITCH);
-  const courtyardDensity = Math.min(1, COURTYARD_BUDGET / estCourtyards);
+  // Шаг квартала. Секции заполняются целиком (без прореживания), но на
+  // гигантских картах шаг увеличиваем — иначе 100×100 км дало бы миллионы
+  // домов (генерация в минуты и >1 ГБ). Кварталы становятся крупнее, но
+  // застройка остаётся сплошной на любом удалении.
+  const COURTYARD_PITCH = clamp(118 * Math.sqrt(S / 5000), 118, 620);
 
   // Аэропорты занимают целые секции на окраине (внешний пояс), подальше друг от друга.
   const airportWanted = clamp(Math.round(o.airports), 0, 2);
@@ -819,27 +827,18 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
           const v1 = (j + 1 - padF) / nv;
           const wIn = cellW * (1 - 2 * padF);
           const hIn = cellH * (1 - 2 * padF);
-          // Кварталы фиксированного шага, слоты прореживаются под бюджет.
+          // Кварталы фиксированного шага — заполняем ВСЕ свободные слоты.
           const cu = Math.max(1, Math.round(wIn / COURTYARD_PITCH));
           const cv = Math.max(1, Math.round(hIn / COURTYARD_PITCH));
-          const slots = cu * cv;
-          const expected = slots * courtyardDensity;
-          const count = Math.min(slots, Math.floor(expected) + (rng() < expected % 1 ? 1 : 0));
 
-          const drawSlot = (ci: number, cj: number) => {
-            const su0 = u0 + ((u1 - u0) * ci) / cu;
-            const su1 = u0 + ((u1 - u0) * (ci + 1)) / cu;
-            const sv0 = v0 + ((v1 - v0) * cj) / cv;
-            const sv1 = v0 + ((v1 - v0) * (cj + 1)) / cv;
-            if (!slotFree(su0, su1, sv0, sv1)) return;
-            fillCourtyardBlock(level, s, su0, su1, sv0, sv1);
-          };
-
-          if (count >= slots) {
-            for (let ci = 0; ci < cu; ci++) for (let cj = 0; cj < cv; cj++) drawSlot(ci, cj);
-          } else {
-            for (let k = 0; k < count; k++) {
-              drawSlot(Math.floor(rng() * cu), Math.floor(rng() * cv));
+          for (let ci = 0; ci < cu; ci++) {
+            for (let cj = 0; cj < cv; cj++) {
+              const su0 = u0 + ((u1 - u0) * ci) / cu;
+              const su1 = u0 + ((u1 - u0) * (ci + 1)) / cu;
+              const sv0 = v0 + ((v1 - v0) * cj) / cv;
+              const sv1 = v0 + ((v1 - v0) * (cj + 1)) / cv;
+              if (!slotFree(su0, su1, sv0, sv1)) continue;
+              fillCourtyardBlock(level, s, su0, su1, sv0, sv1);
             }
           }
         }
@@ -1078,6 +1077,7 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
     airports,
     bounds: { minX: -half, minY: -half, maxX: half, maxY: half },
     seed,
+    majorFactor,
   };
 }
 
