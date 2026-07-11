@@ -328,6 +328,8 @@ input[type="range"].slider::-moz-range-thumb {
 .tut-card {
   position: fixed;
   width: min(360px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
   background: var(--surface);
   border-radius: var(--radius);
   padding: 20px;
@@ -606,5 +608,21 @@ details.settings .speed-row {
   .palette {
     top: 12px;
     right: 12px;
+  }
+
+  /* Кнопки обучения переносим на узком экране, чтобы не уезжали за край */
+  .tut-actions {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .tut-spacer {
+    display: none;
+  }
+  .tut-progress {
+    flex: 1 1 100%;
+    order: -1;
+  }
+  .tut-skip {
+    margin-left: auto;
   }
 }

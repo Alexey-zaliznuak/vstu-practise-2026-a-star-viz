@@ -195,8 +195,23 @@ export class Tutorial {
       (this.index === this.steps.length - 1 ? "Готово" : "Далее");
 
     // Небольшая задержка, чтобы сгенерированная карта успела отрисоваться
-    // и getBoundingClientRect вернул актуальные размеры.
-    requestAnimationFrame(() => this.layout());
+    // и getBoundingClientRect вернул актуальные размеры. Сначала подтягиваем
+    // цель в видимую область (важно на мобильном, где сайдбар прокручиваемый
+    // и оверлей обучения перекрывает ручной скролл), затем считаем layout.
+    requestAnimationFrame(() => {
+      this.scrollTargetIntoView(this.steps[this.index]?.target?.() ?? null);
+      requestAnimationFrame(() => this.layout());
+    });
+  }
+
+  /**
+   * Прокручивает подсвечиваемый элемент в видимую область его скролл-контейнера.
+   * Без этого на смартфоне цель (например, ползунок скорости в нижнем сайдбаре)
+   * может оказаться ниже экрана, а прокрутить вручную мешает оверлей обучения.
+   */
+  private scrollTargetIntoView(target: Element | null) {
+    if (!target) return;
+    target.scrollIntoView({ block: "center", inline: "nearest" });
   }
 
   private layout() {
@@ -241,9 +256,15 @@ export class Tutorial {
     const gap = 18;
     const margin = 12;
 
+    // Прижимаем позицию так, чтобы карточка целиком осталась в пределах экрана.
+    const clampTop = (t: number) =>
+      ch >= vh - margin * 2 ? margin : Math.max(margin, Math.min(t, vh - ch - margin));
+    const clampLeft = (l: number) =>
+      Math.max(margin, Math.min(l, vw - cw - margin));
+
     if (!rect) {
-      card.style.left = `${(vw - cw) / 2}px`;
-      card.style.top = `${(vh - ch) / 2}px`;
+      card.style.left = `${clampLeft((vw - cw) / 2)}px`;
+      card.style.top = `${clampTop((vh - ch) / 2)}px`;
       return;
     }
 
@@ -257,11 +278,10 @@ export class Tutorial {
       top = (vh - ch) / 2;
     }
 
-    let left = rect.left + rect.width / 2 - cw / 2;
-    left = Math.max(margin, Math.min(left, vw - cw - margin));
+    const left = rect.left + rect.width / 2 - cw / 2;
 
-    card.style.left = `${left}px`;
-    card.style.top = `${top}px`;
+    card.style.left = `${clampLeft(left)}px`;
+    card.style.top = `${clampTop(top)}px`;
   }
 
   private next() {
