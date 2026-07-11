@@ -206,7 +206,21 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
   const over = radii[rings - 1] / maxR;
   if (over > 1) for (let i = 0; i < rings; i++) radii[i] /= over;
 
-  // Гармоники «кривизны» каждого кольца (амплитуда ограничена, чтобы кольца не пересекались).
+  // Общая «форма» города: крупные гармоники, одинаковые для всех колец.
+  // Так кольца гнутся синхронно и не пересекаются, а амплитуда не ограничена
+  // зазором между кольцами — кривизна заметна даже на огромных картах.
+  // Суммарная амплитуда ≤ ~0.24, чтобы внешнее кольцо не вылезло за границу.
+  const globalHarmonics: { k: number; amp: number; phase: number }[] = [];
+  for (let k = 1; k <= 3; k++) {
+    globalHarmonics.push({
+      k,
+      amp: (o.ringWobble * 0.13 * rand(0.55, 1)) / k,
+      phase: rand(0, Math.PI * 2),
+    });
+  }
+
+  // Индивидуальные гармоники каждого кольца (мелкая рябь; амплитуда ограничена,
+  // чтобы соседние кольца не пересекались).
   const harmonics = radii.map((R, idx) => {
     const ampBase = Math.min(o.ringWobble * 0.13, (minGap * 0.45) / R);
     const hs: { k: number; amp: number; phase: number }[] = [];
@@ -225,6 +239,7 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
     if (level <= 0) return 0;
     if (level >= LV) return beltR / Math.max(Math.abs(Math.cos(th)), Math.abs(Math.sin(th)));
     let f = 1;
+    for (const g of globalHarmonics) f += g.amp * Math.sin(g.k * th + g.phase);
     for (const h of harmonics[level - 1]) f += h.amp * Math.sin(h.k * th + h.phase);
     return radii[level - 1] * f;
   };
@@ -369,15 +384,15 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
     return pts;
   };
 
-  const blob = (level: number, s: number, cu: number, cv: number, r: number): Pt[] => {
+  const blob = (level: number, s: number, cu: number, cv: number, ru: number, rv: number): Pt[] => {
     const pts: Pt[] = [];
     const p1 = rand(0, Math.PI * 2);
     const p2 = rand(0, Math.PI * 2);
     const n = 16;
     for (let k = 0; k < n; k++) {
       const a = (k / n) * Math.PI * 2;
-      const rr = r * (1 + 0.22 * Math.sin(2 * a + p1) + 0.12 * Math.sin(3 * a + p2));
-      pts.push(sectionPoint(level, s, cu + Math.cos(a) * rr, cv + Math.sin(a) * rr));
+      const f = 1 + 0.22 * Math.sin(2 * a + p1) + 0.12 * Math.sin(3 * a + p2);
+      pts.push(sectionPoint(level, s, cu + Math.cos(a) * ru * f, cv + Math.sin(a) * rv * f));
     }
     return pts;
   };
@@ -508,6 +523,14 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
   const buildings: Building[] = [];
   const airports: Airport[] = [];
 
+  // Дома фиксированного размера (~квартал 120 м). На гигантских картах их
+  // влезли бы миллионы — прореживаем застройку под общий бюджет, иначе
+  // генерация и рендер захлёбываются.
+  const COURTYARD_PITCH = 118;
+  const COURTYARD_BUDGET = 3500;
+  const estCourtyards = (S * S * 0.45) / (COURTYARD_PITCH * COURTYARD_PITCH);
+  const courtyardDensity = Math.min(1, COURTYARD_BUDGET / estCourtyards);
+
   // Аэропорты занимают целые секции на окраине (внешний пояс), подальше друг от друга.
   const airportWanted = clamp(Math.round(o.airports), 0, 2);
   const airportAt = new Set<string>();
@@ -544,117 +567,44 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
       const leftB = radSeg[level][s];
       const rightB = radSeg[level][(s + 1) % spokes];
 
-      if (kind === "park" || kind === "lake") {
-        parks.push(paramRect(level, s, 0.05, 0.95, 0.05, 0.95));
-        if (kind === "lake") {
-          lakes.push(blob(level, s, rand(0.4, 0.6), rand(0.4, 0.6), rand(0.28, 0.38)));
-        } else {
-          if (rng() < 0.45) lakes.push(blob(level, s, rand(0.3, 0.7), rand(0.35, 0.65), rand(0.12, 0.2)));
-          if (rng() < 0.55) {
-            // мини-речка через парк
-            const pts: Pt[] = [];
-            const v0 = rand(0.2, 0.8);
-            const v1 = rand(0.2, 0.8);
-            const ph = rand(0, Math.PI * 2);
-            for (let k = 0; k <= 10; k++) {
-              const t = k / 10;
-              const v = clamp(v0 + (v1 - v0) * t + 0.07 * Math.sin(t * 5 + ph), 0.08, 0.92);
-              pts.push(sectionPoint(level, s, 0.08 + t * 0.84, v));
-            }
-            streams.push({ points: pts, width: rand(10, 22) });
-          }
-        }
-        continue;
-      }
-
-      if (kind === "factory") {
-        // Дорога-петля вокруг завода.
-        const U0 = 0.16;
-        const U1 = 0.84;
-        const V0 = 0.16;
-        const V1 = 0.84;
-        const loopUV: [number, number][] = [];
-        for (let i = 0; i < 3; i++) loopUV.push([lerp(U0, U1, i / 3), V0]);
-        for (let i = 0; i < 3; i++) loopUV.push([U1, lerp(V0, V1, i / 3)]);
-        for (let i = 0; i < 3; i++) loopUV.push([lerp(U1, U0, i / 3), V1]);
-        for (let i = 0; i < 3; i++) loopUV.push([U0, lerp(V1, V0, i / 3)]);
-        const loopIds = loopUV.map(([u, v]) => addNodeAt(sectionPoint(level, s, u, v)));
-        for (let i = 0; i < loopIds.length; i++) {
-          connect(loopIds[i], loopIds[(i + 1) % loopIds.length], true);
-        }
-
-        // Въезды: 2–3 стороны наружу к границам секции.
-        const sides: { list: string[]; u: number; v: number }[] = [
-          ...(level >= 1 ? [{ list: innerB, u: 0.5, v: V0 }] : []),
-          { list: outerB, u: 0.5, v: V1 },
-          { list: leftB, u: U0, v: 0.5 },
-          { list: rightB, u: U1, v: 0.5 },
-        ];
-        for (let i = sides.length - 1; i > 0; i--) {
-          const j = Math.floor(rng() * (i + 1));
-          [sides[i], sides[j]] = [sides[j], sides[i]];
-        }
-        const takeN = 2 + (rng() < 0.4 ? 1 : 0);
-        for (const side of sides.slice(0, takeN)) {
-          const pTarget = sectionPoint(level, s, side.u, side.v);
-          const loopNear = nearestOf(loopIds, pTarget);
-          const bnd = nearestOf(side.list, pTarget);
-          if (loopNear && bnd) connect(loopNear, bnd, false);
-        }
-
-        // Внутренние проезды (тупиковые) внутри контура.
-        const stubs: [Pt, Pt][] = [
-          [{ x: 0.5, y: V0 }, { x: 0.5, y: 0.26 }],
-          [{ x: U0, y: 0.5 }, { x: 0.26, y: 0.5 }],
-          [{ x: 0.5, y: V1 }, { x: 0.5, y: 0.74 }],
-        ];
-        for (const [fromUV, toUV] of stubs) {
-          if (rng() < 0.3) continue;
-          const loopNear = nearestOf(loopIds, sectionPoint(level, s, fromUV.x, fromUV.y));
-          if (!loopNear) continue;
-          const inner = addNodeAt(sectionPoint(level, s, toUV.x, toUV.y));
-          connect(loopNear, inner, false);
-        }
-
-        // Корпуса завода — прямоугольники в локальной сетке ячейки.
-        const f00 = sectionPoint(level, s, 0.2, 0.22);
-        const f10 = sectionPoint(level, s, 0.62, 0.22);
-        const f01 = sectionPoint(level, s, 0.2, 0.72);
-        const fU = { x: f10.x - f00.x, y: f10.y - f00.y };
-        const fV = { x: f01.x - f00.x, y: f01.y - f00.y };
-        buildings.push({ poly: cellRect(f00, fU, fV, 0.05, 0.88, 0.08, 0.92), color: "#8a5f52" });
-        buildings.push({ poly: cellRect(f00, fU, fV, 0.62, 0.92, 0.1, 0.55), color: "#77685e" });
-        continue;
-      }
-
       if (kind === "airport") {
-        const apron = paramRect(level, s, 0.06, 0.94, 0.06, 0.94);
-        const rw1a = sectionPoint(level, s, 0.08, 0.36);
-        const rw1b = sectionPoint(level, s, 0.92, 0.42);
-        const rw2a = sectionPoint(level, s, 0.1, 0.58);
-        const rw2b = sectionPoint(level, s, 0.9, 0.64);
+        // Аэропорт не растягивается на всю секцию: на больших картах занимает
+        // ограниченную площадку ~3–4.5 км.
+        const aSideU = Math.min(0.88, rand(3000, 4500) / Math.max(1, width));
+        const aSideV = Math.min(0.88, rand(3000, 4500) / Math.max(1, height));
+        const au0 = 0.06 + rand(0, 0.88 - aSideU);
+        const av0 = 0.06 + rand(0, 0.88 - aSideV);
+        const ax = (f: number) => au0 + aSideU * f;
+        const ay = (f: number) => av0 + aSideV * f;
+        const apt = (u: number, v: number) => sectionPoint(level, s, ax(u), ay(v));
+
+        const apron = paramRect(level, s, ax(0), ax(1), ay(0), ay(1));
+        const rw1a = apt(0.02, 0.34);
+        const rw1b = apt(0.98, 0.41);
+        const rw2a = apt(0.05, 0.59);
+        const rw2b = apt(0.95, 0.66);
         const runways: Runway[] = [
           { a: rw1a, b: rw1b, width: 48 },
           { a: rw2a, b: rw2b, width: 40 },
         ];
-        const t00 = sectionPoint(level, s, 0.38, 0.08);
-        const t10 = sectionPoint(level, s, 0.68, 0.08);
-        const t01 = sectionPoint(level, s, 0.38, 0.22);
+        const t00 = apt(0.36, 0.02);
+        const t10 = apt(0.7, 0.02);
+        const t01 = apt(0.36, 0.18);
         const tU = { x: t10.x - t00.x, y: t10.y - t00.y };
         const tV = { x: t01.x - t00.x, y: t01.y - t00.y };
         const terminal = cellRect(t00, tU, tV, 0, 1, 0, 1);
-        const p00 = sectionPoint(level, s, 0.1, 0.08);
-        const p10 = sectionPoint(level, s, 0.34, 0.08);
-        const p01 = sectionPoint(level, s, 0.1, 0.2);
+        const p00 = apt(0.05, 0.02);
+        const p10 = apt(0.32, 0.02);
+        const p01 = apt(0.05, 0.16);
         const pU = { x: p10.x - p00.x, y: p10.y - p00.y };
         const pV = { x: p01.x - p00.x, y: p01.y - p00.y };
         const parking = cellRect(p00, pU, pV, 0, 1, 0, 1);
         const taxiways: Pt[][] = [
-          [sectionPoint(level, s, 0.52, 0.2), sectionPoint(level, s, 0.48, 0.34), rw1a],
-          [sectionPoint(level, s, 0.54, 0.2), sectionPoint(level, s, 0.52, 0.56), rw2a],
+          [apt(0.52, 0.16), apt(0.47, 0.32), rw1a],
+          [apt(0.55, 0.16), apt(0.53, 0.57), rw2a],
         ];
-        const tower = sectionPoint(level, s, 0.72, 0.16);
-        const termId = addNodeAt(sectionPoint(level, s, 0.53, 0.1));
+        const tower = apt(0.76, 0.12);
+        const termId = addNodeAt(apt(0.53, 0.06));
         const pT = nodes.get(termId)!;
         const b1 = nearestOf(innerB, pT);
         const b2 = nearestOf(leftB, pT);
@@ -663,7 +613,7 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
         airports.push({
           apron,
           runways,
-          center: sectionPoint(level, s, 0.5, 0.5),
+          center: apt(0.5, 0.5),
           terminal,
           taxiways,
           tower,
@@ -672,13 +622,53 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
         continue;
       }
 
-      // ---- Жилая секция: сетка улиц + кварталы с дворами ----
+      // ---- Уличная сетка секции (общая для жилья/парков/заводов) ----
       const nu = clamp(Math.round(width / blockSize), 1, 9);
       const nv = clamp(Math.round(height / blockSize), 1, 9);
+      const cellW = width / nu;
+      const cellH = height / nv;
+
+      // Спец-зона (парк/озеро/завод), ограниченная по площади в МЕТРАХ:
+      // парк/озеро ≤ ~2 км², завод ≤ ~0.6×0.6 км. Зона привязывается к сетке
+      // ячеек, но если ячейки огромные (окраины большой карты) — ужимается
+      // до целевого размера. Остальное место секции застраивается жильём.
+      let zoneRect: { u0: number; u1: number; v0: number; v1: number } | null = null;
+      if (kind === "park" || kind === "lake" || kind === "factory") {
+        const targetSide = kind === "factory" ? rand(280, 620) : Math.sqrt(rand(0.6, 1.8)) * 1000;
+        const spanI = clamp(Math.round(targetSide / cellW), 1, nu);
+        const spanJ = clamp(Math.round(targetSide / cellH), 1, nv);
+        const i0 = Math.min(nu - spanI, Math.floor(rand(0, nu - spanI + 1)));
+        const j0 = Math.min(nv - spanJ, Math.floor(rand(0, nv - spanJ + 1)));
+        let u0 = i0 / nu;
+        let u1 = (i0 + spanI) / nu;
+        let v0 = j0 / nv;
+        let v1 = (j0 + spanJ) / nv;
+        if ((u1 - u0) * width > targetSide * 1.2) {
+          const span = (targetSide * 1.2) / width;
+          u0 += rand(0, u1 - u0 - span);
+          u1 = u0 + span;
+        }
+        if ((v1 - v0) * height > targetSide * 1.2) {
+          const span = (targetSide * 1.2) / height;
+          v0 += rand(0, v1 - v0 - span);
+          v1 = v0 + span;
+        }
+        zoneRect = { u0, u1, v0, v1 };
+      }
+      const nodeInZone = (i: number, j: number) => {
+        if (!zoneRect) return false;
+        const u = i / nu;
+        const v = j / nv;
+        const eps = 0.02;
+        return (
+          u > zoneRect.u0 + eps && u < zoneRect.u1 - eps && v > zoneRect.v0 + eps && v < zoneRect.v1 - eps
+        );
+      };
 
       const inner = new Map<string, string>();
       for (let i = 1; i < nu; i++) {
         for (let j = 1; j < nv; j++) {
+          if (nodeInZone(i, j)) continue; // внутри парка/завода обычных улиц нет
           const u = i / nu + rand(-0.15, 0.15) / nu;
           const v = j / nv + rand(-0.15, 0.15) / nv;
           inner.set(`${i}:${j}`, addNodeAt(sectionPoint(level, s, u, v)));
@@ -687,7 +677,8 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
       // улицы-сетка (со случайными обрывами)
       for (let i = 1; i < nu; i++) {
         for (let j = 1; j < nv; j++) {
-          const a = inner.get(`${i}:${j}`)!;
+          const a = inner.get(`${i}:${j}`);
+          if (!a) continue;
           const right = inner.get(`${i + 1}:${j}`);
           const down = inner.get(`${i}:${j + 1}`);
           if (right && rng() >= drop) connect(a, right, false);
@@ -710,20 +701,147 @@ export function generateCity(opts: CityOptions = {}): CityGraph {
         attach(inner.get(`${nu - 1}:${j}`), rightB);
       }
 
-      // Застройка: микро-кварталы фиксированного размера (~90 м), не зависят от длины сектора.
-      const courtyardCell = clamp(blockSize * 0.65, 75, 105);
-      const bu = clamp(Math.ceil(width / courtyardCell), 1, 28);
-      const bv = clamp(Math.ceil(height / courtyardCell), 1, 28);
-      const padU = rand(0.02, 0.05);
-      const padV = rand(0.02, 0.05);
-      for (let bi = 0; bi < bu; bi++) {
-        for (let bj = 0; bj < bv; bj++) {
-          if (level === 0 && bj === 0 && bi < bu * 0.4) continue;
-          const u0 = padU + (bi / bu) * (1 - 2 * padU);
-          const u1 = padU + ((bi + 1) / bu) * (1 - 2 * padU);
-          const v0 = padV + (bj / bv) * (1 - 2 * padV);
-          const v1 = padV + ((bj + 1) / bv) * (1 - 2 * padV);
-          fillCourtyardBlock(level, s, u0, u1, v0, v1);
+      // ---- Содержимое спец-зоны ----
+      if (zoneRect) {
+        const zu0 = zoneRect.u0;
+        const zu1 = zoneRect.u1;
+        const zv0 = zoneRect.v0;
+        const zv1 = zoneRect.v1;
+        const zsu = zu1 - zu0;
+        const zsv = zv1 - zv0;
+        const zcu = (zu0 + zu1) / 2;
+        const zcv = (zv0 + zv1) / 2;
+        const insU = Math.min(0.16 / nu, zsu * 0.12);
+        const insV = Math.min(0.16 / nv, zsv * 0.12);
+
+        if (kind === "park" || kind === "lake") {
+          parks.push(paramRect(level, s, zu0 + insU, zu1 - insU, zv0 + insV, zv1 - insV));
+          if (kind === "lake") {
+            lakes.push(blob(level, s, zcu, zcv, zsu * 0.32, zsv * 0.32));
+          } else {
+            if (rng() < 0.45) {
+              lakes.push(
+                blob(
+                  level,
+                  s,
+                  zcu + rand(-0.18, 0.18) * zsu,
+                  zcv + rand(-0.15, 0.15) * zsv,
+                  zsu * rand(0.1, 0.16),
+                  zsv * rand(0.1, 0.16)
+                )
+              );
+            }
+            if (rng() < 0.55) {
+              // мини-речка через парк
+              const pts: Pt[] = [];
+              const w0 = rand(0.15, 0.85);
+              const w1 = rand(0.15, 0.85);
+              const ph = rand(0, Math.PI * 2);
+              for (let k = 0; k <= 10; k++) {
+                const t = k / 10;
+                const w = clamp(w0 + (w1 - w0) * t + 0.07 * Math.sin(t * 5 + ph), 0.06, 0.94);
+                pts.push(sectionPoint(level, s, zu0 + zsu * (0.06 + t * 0.88), zv0 + zsv * w));
+              }
+              streams.push({ points: pts, width: rand(10, 22) });
+            }
+          }
+        } else if (kind === "factory") {
+          // Дорога-петля по периметру заводской зоны.
+          const fu0 = zu0 + zsu * 0.14;
+          const fu1 = zu1 - zsu * 0.14;
+          const fv0 = zv0 + zsv * 0.14;
+          const fv1 = zv1 - zsv * 0.14;
+          const loopUV: [number, number][] = [];
+          for (let i = 0; i < 3; i++) loopUV.push([lerp(fu0, fu1, i / 3), fv0]);
+          for (let i = 0; i < 3; i++) loopUV.push([fu1, lerp(fv0, fv1, i / 3)]);
+          for (let i = 0; i < 3; i++) loopUV.push([lerp(fu1, fu0, i / 3), fv1]);
+          for (let i = 0; i < 3; i++) loopUV.push([fu0, lerp(fv1, fv0, i / 3)]);
+          const loopIds = loopUV.map(([u, v]) => addNodeAt(sectionPoint(level, s, u, v)));
+          for (let i = 0; i < loopIds.length; i++) {
+            connect(loopIds[i], loopIds[(i + 1) % loopIds.length], true);
+          }
+
+          // Въезды: 2–3 стороны петли к ближайшим уличным/граничным узлам.
+          const targets = [...innerB, ...outerB, ...leftB, ...rightB, ...inner.values()];
+          const gateUV: [number, number][] = [
+            [(fu0 + fu1) / 2, fv0],
+            [(fu0 + fu1) / 2, fv1],
+            [fu0, (fv0 + fv1) / 2],
+            [fu1, (fv0 + fv1) / 2],
+          ];
+          for (let i = gateUV.length - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            [gateUV[i], gateUV[j]] = [gateUV[j], gateUV[i]];
+          }
+          const takeN = 2 + (rng() < 0.4 ? 1 : 0);
+          for (const [gu, gv] of gateUV.slice(0, takeN)) {
+            const pTarget = sectionPoint(level, s, gu, gv);
+            const loopNear = nearestOf(loopIds, pTarget);
+            const bnd = nearestOf(targets, pTarget);
+            if (loopNear && bnd) connect(loopNear, bnd, false);
+          }
+
+          // Внутренние тупиковые проезды.
+          const stubs: [number, number, number, number][] = [
+            [(fu0 + fu1) / 2, fv0, (fu0 + fu1) / 2, zv0 + zsv * 0.34],
+            [fu0, (fv0 + fv1) / 2, zu0 + zsu * 0.34, (fv0 + fv1) / 2],
+          ];
+          for (const [su, sv, tu, tv] of stubs) {
+            if (rng() < 0.3) continue;
+            const loopNear = nearestOf(loopIds, sectionPoint(level, s, su, sv));
+            if (!loopNear) continue;
+            const stubId = addNodeAt(sectionPoint(level, s, tu, tv));
+            connect(loopNear, stubId, false);
+          }
+
+          // Корпуса завода — в локальной системе зоны (размер зоны уже ограничен).
+          const f00 = sectionPoint(level, s, zu0 + zsu * 0.2, zv0 + zsv * 0.22);
+          const f10 = sectionPoint(level, s, zu0 + zsu * 0.62, zv0 + zsv * 0.22);
+          const f01 = sectionPoint(level, s, zu0 + zsu * 0.2, zv0 + zsv * 0.72);
+          const fU = { x: f10.x - f00.x, y: f10.y - f00.y };
+          const fV = { x: f01.x - f00.x, y: f01.y - f00.y };
+          buildings.push({ poly: cellRect(f00, fU, fV, 0.05, 0.88, 0.08, 0.92), color: "#8a5f52" });
+          buildings.push({ poly: cellRect(f00, fU, fV, 0.62, 0.92, 0.1, 0.55), color: "#77685e" });
+        }
+      }
+
+      // ---- Кварталы с домами по ячейкам (слоты внутри спец-зоны пропускаются) ----
+      // Отступ от улиц: узлы сетки джиттерятся на ±15% ячейки, берём чуть больше.
+      const padF = 0.17;
+      const slotFree = (su0: number, su1: number, sv0: number, sv1: number) =>
+        !zoneRect || su1 <= zoneRect.u0 || su0 >= zoneRect.u1 || sv1 <= zoneRect.v0 || sv0 >= zoneRect.v1;
+      for (let i = 0; i < nu; i++) {
+        for (let j = 0; j < nv; j++) {
+          if (level === 0 && j === 0) continue; // вырожденные ячейки у вершины сектора
+          const u0 = (i + padF) / nu;
+          const u1 = (i + 1 - padF) / nu;
+          const v0 = (j + padF) / nv;
+          const v1 = (j + 1 - padF) / nv;
+          const wIn = cellW * (1 - 2 * padF);
+          const hIn = cellH * (1 - 2 * padF);
+          // Кварталы фиксированного шага, слоты прореживаются под бюджет.
+          const cu = Math.max(1, Math.round(wIn / COURTYARD_PITCH));
+          const cv = Math.max(1, Math.round(hIn / COURTYARD_PITCH));
+          const slots = cu * cv;
+          const expected = slots * courtyardDensity;
+          const count = Math.min(slots, Math.floor(expected) + (rng() < expected % 1 ? 1 : 0));
+
+          const drawSlot = (ci: number, cj: number) => {
+            const su0 = u0 + ((u1 - u0) * ci) / cu;
+            const su1 = u0 + ((u1 - u0) * (ci + 1)) / cu;
+            const sv0 = v0 + ((v1 - v0) * cj) / cv;
+            const sv1 = v0 + ((v1 - v0) * (cj + 1)) / cv;
+            if (!slotFree(su0, su1, sv0, sv1)) return;
+            fillCourtyardBlock(level, s, su0, su1, sv0, sv1);
+          };
+
+          if (count >= slots) {
+            for (let ci = 0; ci < cu; ci++) for (let cj = 0; cj < cv; cj++) drawSlot(ci, cj);
+          } else {
+            for (let k = 0; k < count; k++) {
+              drawSlot(Math.floor(rng() * cu), Math.floor(rng() * cv));
+            }
+          }
         }
       }
     }

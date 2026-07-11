@@ -299,18 +299,11 @@ export class CityMap {
 
   private handleClick(px: number, py: number) {
     const w = this.screenToWorld(px, py);
-    const nodeHit = this.nearestNode(w.x, w.y, 28);
-    const roadHit = this.nearestRoad(w.x, w.y, 24);
+    // Узел всегда «выше» улицы: дорогу выбираем, только если рядом нет перекрёстка.
+    const nodeHit = this.nearestNode(w.x, w.y, 26);
+    const roadHit = nodeHit ? null : this.nearestRoad(w.x, w.y, 24);
 
-    if (!nodeHit && !roadHit) {
-      this.pickedRoad = null;
-      this.emitRoadInfo(null, px, py);
-      this.render();
-      return;
-    }
-
-    // Приоритет дороге, если клик ближе к линии, чем к перекрёстку.
-    if (roadHit && (!nodeHit || this.roadDistPx(roadHit, w) < this.nodeDistPx(nodeHit, w) * 0.85)) {
+    if (roadHit) {
       this.pickedRoad = roadHit;
       this.emitRoadInfo(roadHit, px, py);
       this.render();
@@ -319,29 +312,22 @@ export class CityMap {
 
     this.pickedRoad = null;
     this.emitRoadInfo(null, px, py);
-    const hit = nodeHit;
-    if (!hit) return;
+    if (!nodeHit) {
+      this.render();
+      return;
+    }
 
     this.clearSearch(false);
     if (this.startId && this.goalId) {
-      this.startId = hit;
+      this.startId = nodeHit;
       this.goalId = null;
     } else if (!this.startId) {
-      this.startId = hit;
-    } else if (hit !== this.startId) {
-      this.goalId = hit;
+      this.startId = nodeHit;
+    } else if (nodeHit !== this.startId) {
+      this.goalId = nodeHit;
     }
     this.render();
     this.emitSelection();
-  }
-
-  private nodeDistPx(id: string, w: { x: number; y: number }) {
-    const n = this.data.nodes.get(id)!;
-    return Math.hypot(n.x - w.x, n.y - w.y) * this.scale;
-  }
-
-  private roadDistPx(road: RoadSegment, w: { x: number; y: number }) {
-    return segPointDist(road.a, road.b, w.x, w.y) * this.scale;
   }
 
   clearSelection() {
@@ -494,15 +480,11 @@ export class CityMap {
         return;
       }
 
-      // Наведение — дорога или перекрёсток
+      // Наведение: узел «выше» улицы — дорога подсвечивается, только если
+      // рядом нет перекрёстка.
       const w = this.screenToWorld(p.x, p.y);
-      const road = this.nearestRoad(w.x, w.y, 20);
-      const node = this.nearestNode(w.x, w.y, 24);
-      const preferRoad =
-        road && (!node || this.roadDistPx(road, w) < this.nodeDistPx(node, w) * 0.9);
-
-      const nextRoad = preferRoad ? road : null;
-      const nextNode = preferRoad ? null : node;
+      const nextNode = this.nearestNode(w.x, w.y, 24);
+      const nextRoad = nextNode ? null : this.nearestRoad(w.x, w.y, 20);
       const roadChanged =
         nextRoad?.from !== this.hoverRoad?.from || nextRoad?.to !== this.hoverRoad?.to;
       const nodeChanged = nextNode !== this.hoverId;
@@ -633,11 +615,12 @@ export class CityMap {
     ctx.fillStyle = COLORS.bg;
     ctx.fillRect(0, 0, this.viewW, this.viewH);
 
+    // Дома рисуем ПОД дорогами, чтобы улицы не перекрывались застройкой.
     this.drawParks(ctx);
     this.drawWater(ctx);
     this.drawAirports(ctx);
-    this.drawEdges(ctx);
     this.drawBuildings(ctx);
+    this.drawEdges(ctx);
     this.drawRail(ctx);
     this.drawStations(ctx);
   }
@@ -645,6 +628,18 @@ export class CityMap {
   /** Толщина линии: метры → пиксели с нижним пределом видимости. */
   private lw(meters: number, minPx: number): number {
     return Math.max(minPx, meters * this.scale);
+  }
+
+  /** Видимая область в мировых координатах с запасом marginM (метры). */
+  private worldViewRect(marginM = 0) {
+    const tl = this.screenToWorld(0, 0);
+    const br = this.screenToWorld(this.viewW, this.viewH);
+    return {
+      minX: tl.x - marginM,
+      minY: tl.y - marginM,
+      maxX: br.x + marginM,
+      maxY: br.y + marginM,
+    };
   }
 
   private tracePath(ctx: CanvasRenderingContext2D, pts: Pt[]) {
@@ -666,7 +661,13 @@ export class CityMap {
   }
 
   private drawParks(ctx: CanvasRenderingContext2D) {
-    for (const p of this.data.parks) this.fillPoly(ctx, p, COLORS.park);
+    // парки/озёра ограничены ~1.5 км в поперечнике — запас 1600 м
+    const v = this.worldViewRect(1600);
+    for (const p of this.data.parks) {
+      const a = p[0];
+      if (a.x < v.minX || a.x > v.maxX || a.y < v.minY || a.y > v.maxY) continue;
+      this.fillPoly(ctx, p, COLORS.park);
+    }
   }
 
   private drawWater(ctx: CanvasRenderingContext2D) {
@@ -686,15 +687,20 @@ export class CityMap {
       this.tracePath(ctx, rv.points);
       ctx.stroke();
     }
+    const v = this.worldViewRect(1600);
+    const visible = (p: Pt) => p.x >= v.minX && p.x <= v.maxX && p.y >= v.minY && p.y <= v.maxY;
     for (const st of this.data.streams) {
-      if (st.points.length < 2) continue;
+      if (st.points.length < 2 || !visible(st.points[0])) continue;
       ctx.strokeStyle = COLORS.water;
       ctx.lineWidth = this.lw(st.width, 1);
       ctx.beginPath();
       this.tracePath(ctx, st.points);
       ctx.stroke();
     }
-    for (const lake of this.data.lakes) this.fillPoly(ctx, lake, COLORS.water);
+    for (const lake of this.data.lakes) {
+      if (!visible(lake[0])) continue;
+      this.fillPoly(ctx, lake, COLORS.water);
+    }
     ctx.restore();
   }
 
@@ -812,6 +818,7 @@ export class CityMap {
       { match: (e) => e.major && !e.bridge, color: COLORS.roadMajor, width: this.lw(22, 1.4) },
       { match: (e) => e.bridge, color: COLORS.bridge, width: this.lw(26, 2) },
     ];
+    const v = this.worldViewRect(100);
     for (const pass of passes) {
       ctx.strokeStyle = pass.color;
       ctx.lineWidth = pass.width;
@@ -821,6 +828,14 @@ export class CityMap {
         for (const edge of list) {
           if (from >= edge.to || !pass.match(edge)) continue;
           const b = this.data.nodes.get(edge.to)!;
+          // отсечение: bbox отрезка вне вьюпорта
+          if (
+            (a.x < v.minX && b.x < v.minX) ||
+            (a.x > v.maxX && b.x > v.maxX) ||
+            (a.y < v.minY && b.y < v.minY) ||
+            (a.y > v.maxY && b.y > v.maxY)
+          )
+            continue;
           const pa = this.worldToScreen(a.x, a.y);
           const pb = this.worldToScreen(b.x, b.y);
           ctx.moveTo(pa.x, pa.y);
@@ -833,31 +848,34 @@ export class CityMap {
 
   private drawBuildings(ctx: CanvasRenderingContext2D) {
     if (this.scale < 0.02) return;
+    // корпуса не длиннее ~600 м (завод) — запас 700 м по первой вершине
+    const v = this.worldViewRect(700);
     let color = "";
     for (const b of this.data.buildings) {
+      const pts = b.poly;
+      if (pts.length < 3) continue;
+      const a = pts[0];
+      if (a.x < v.minX || a.x > v.maxX || a.y < v.minY || a.y > v.maxY) continue;
       if (b.color !== color) {
         color = b.color;
         ctx.fillStyle = color;
       }
       ctx.beginPath();
-      const pts = b.poly;
-      if (pts.length < 3) continue;
       const scr = pts.map((p) => this.worldToScreen(p.x, p.y));
       if (b.rounded && scr.length === 4) {
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-        for (const p of scr) {
-          minX = Math.min(minX, p.x);
-          minY = Math.min(minY, p.y);
-          maxX = Math.max(maxX, p.x);
-          maxY = Math.max(maxY, p.y);
+        // скругляем углы по реальному (повёрнутому) контуру через arcTo
+        const e0 = Math.hypot(scr[1].x - scr[0].x, scr[1].y - scr[0].y);
+        const e1 = Math.hypot(scr[2].x - scr[1].x, scr[2].y - scr[1].y);
+        const r = Math.max(0.5, Math.min(6, e0 * 0.25, e1 * 0.25));
+        const mx = (scr[3].x + scr[0].x) / 2;
+        const my = (scr[3].y + scr[0].y) / 2;
+        ctx.moveTo(mx, my);
+        for (let i = 0; i < 4; i++) {
+          const cur = scr[i];
+          const nxt = scr[(i + 1) % 4];
+          ctx.arcTo(cur.x, cur.y, (cur.x + nxt.x) / 2, (cur.y + nxt.y) / 2, r);
         }
-        const rw = maxX - minX;
-        const rh = maxY - minY;
-        const r = Math.min(5, rw * 0.18, rh * 0.18);
-        ctx.roundRect(minX, minY, rw, rh, r);
+        ctx.closePath();
       } else {
         ctx.moveTo(scr[0].x, scr[0].y);
         for (let i = 1; i < scr.length; i++) ctx.lineTo(scr[i].x, scr[i].y);
@@ -937,6 +955,9 @@ export class CityMap {
     const r = this.runner;
     if (!r) return;
     const ctx = this.ctx;
+    const v = this.worldViewRect(300);
+    const visible = (n: CityNode) =>
+      n.x >= v.minX && n.x <= v.maxX && n.y >= v.minY && n.y <= v.maxY;
 
     // Рёбра дерева поиска (cameFrom) для просмотренных вершин
     ctx.strokeStyle = SEARCH_TREE_EDGE;
@@ -946,6 +967,7 @@ export class CityMap {
       if (!r.closed.has(to) && !r.open.has(to)) continue;
       const a = this.data.nodes.get(from)!;
       const b = this.data.nodes.get(to)!;
+      if (!visible(a) && !visible(b)) continue;
       const pa = this.worldToScreen(a.x, a.y);
       const pb = this.worldToScreen(b.x, b.y);
       ctx.moveTo(pa.x, pa.y);
@@ -955,6 +977,7 @@ export class CityMap {
 
     const dot = (id: string, color: string, rad: number) => {
       const n = this.data.nodes.get(id)!;
+      if (!visible(n)) return;
       const p = this.worldToScreen(n.x, n.y);
       ctx.fillStyle = color;
       ctx.beginPath();
@@ -994,8 +1017,10 @@ export class CityMap {
       this.drawHover();
       return;
     }
+    const v = this.worldViewRect(50);
     ctx.fillStyle = COLORS.node;
     for (const n of this.data.nodes.values()) {
+      if (n.x < v.minX || n.x > v.maxX || n.y < v.minY || n.y > v.maxY) continue;
       const p = this.worldToScreen(n.x, n.y);
       ctx.beginPath();
       ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
