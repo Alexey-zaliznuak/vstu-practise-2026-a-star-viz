@@ -18,7 +18,7 @@ export interface Search3DState {
 }
 
 const COLORS = {
-  wall: 0x2a2a35,
+  wall: 0x707078,
   start: 0x2196f3,
   end: 0xf44336,
   open: 0x26c6da,
@@ -235,8 +235,8 @@ export class Grid3DViewer {
     this.openMesh = this.makeLayer(COLORS.open, 0.62, 0.5);
     this.pathMesh = this.makeLayer(COLORS.path, 0.8, 0.95);
 
-    // Стены
-    this.wallMesh = this.makeLayer(COLORS.wall, 0.9, 1);
+    // Стены — полупрозрачный серый, чтобы видеть путь A* сквозь препятствия
+    this.wallMesh = this.makeLayer(COLORS.wall, 0.9, 0.4);
     let i = 0;
     for (const k of this.walls) {
       const [x, y, z] = k.split(",").map(Number);

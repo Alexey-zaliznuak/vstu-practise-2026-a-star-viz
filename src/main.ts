@@ -10,7 +10,7 @@ import { Tutorial } from "./tutorial";
 import { Grid3DViewer, type Search3DState } from "./grid3d";
 
 /** Дискретные шаги скорости поиска: вершин в секунду. */
-const SPEED_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
+const SPEED_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
 const fmtSpeed = (v: number) => (v < 1 ? v.toString() : String(v));
 
 window.addEventListener("error", (e) =>
