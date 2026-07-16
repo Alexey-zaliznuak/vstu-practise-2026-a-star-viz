@@ -999,7 +999,7 @@ export class GridEditor {
 }
 
 /** Бинарная мин-куча по приоритету f = g + h (для A*). */
-class MinHeap {
+export class MinHeap {
   private items: { key: string; priority: number }[] = [];
 
   get size() {

@@ -7,6 +7,7 @@ import {
   type CellTooltip,
 } from "./grid";
 import { Tutorial } from "./tutorial";
+import { Grid3DViewer, type Search3DState } from "./grid3d";
 
 /** Дискретные шаги скорости поиска: вершин в секунду. */
 const SPEED_STEPS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
@@ -96,6 +97,13 @@ app.innerHTML = /* html */ `
   <div class="modal-overlay" id="modal-random" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-random-title">
       <h2 id="modal-random-title">Настройки случайной карты</h2>
+      <div class="dim-row">
+        <span class="speed-label">Размерность</span>
+        <div class="dim-toggle" role="radiogroup" aria-label="Размерность карты">
+          <button type="button" class="dim-btn active" data-dim="2" role="radio" aria-checked="true">2D</button>
+          <button type="button" class="dim-btn" data-dim="3" role="radio" aria-checked="false">3D</button>
+        </div>
+      </div>
       <div class="speed-row">
         <label class="speed-label" for="rand-size">
           Размер поля
@@ -103,7 +111,7 @@ app.innerHTML = /* html */ `
         </label>
         <input type="range" id="rand-size" class="slider" min="5" max="201" step="2" value="101" />
       </div>
-      <p class="hint">Карта будет квадратом size × size клеток. Старт и финиш ставятся в противоположных углах.</p>
+      <p class="hint" id="rand-hint">Карта будет квадратом size × size клеток. Старт и финиш ставятся в противоположных углах.</p>
       <div class="btn-row" style="margin-top: 16px">
         <button class="btn primary grow" id="rand-apply">Сгенерировать</button>
         <button class="btn text" id="rand-close">Закрыть</button>
@@ -121,6 +129,18 @@ app.innerHTML = /* html */ `
     <canvas id="grid"></canvas>
     <div class="coords" id="coords">—</div>
     <div class="cell-tip" id="cell-tip" hidden></div>
+
+    <div class="board-3d" id="board-3d" hidden>
+      <div class="panel-3d">
+        <div class="panel-3d-title">3D-режим (A*, 6 направлений)</div>
+        <div class="btn-row">
+          <button class="btn primary grow" id="btn-3d-search">Запустить A*</button>
+          <button class="btn tonal" id="btn-3d-regen">Новая карта</button>
+        </div>
+        <button class="btn text" id="btn-3d-back">← Назад к 2D</button>
+        <p class="hint">Крути мышью — вращение, колесо — зум. Синий куб — старт, красный — финиш.</p>
+      </div>
+    </div>
   </main>
 `;
 
@@ -238,23 +258,80 @@ document
   .querySelector<HTMLButtonElement>("#btn-maze")!
   .addEventListener("click", () => editor.generateMaze());
 
-// Размер случайной карты (сторона квадрата в клетках).
-let randomSize = 101;
-document
-  .querySelector<HTMLButtonElement>("#btn-random")!
-  .addEventListener("click", () => editor.generateRandom(0.28, randomSize));
+// ---- Настройки случайной карты: размерность и размер ----
+// Отдельные значения размера для 2D и 3D (объём в 3D растёт кубически).
+const DIM_CFG = {
+  2: { min: 5, max: 201, step: 2, def: 101 },
+  3: { min: 5, max: 40, step: 1, def: 15 },
+} as const;
+let currentDim: 2 | 3 = 2;
+let randomSize2d: number = DIM_CFG[2].def;
+let randomSize3d: number = DIM_CFG[3].def;
 
-// ---- Модалка настроек случайной карты ----
 const randModal = document.querySelector<HTMLDivElement>("#modal-random")!;
 const randSizeInput = document.querySelector<HTMLInputElement>("#rand-size")!;
 const randSizeVal = document.querySelector<HTMLSpanElement>("#rand-size-val")!;
+const randHint = document.querySelector<HTMLParagraphElement>("#rand-hint")!;
+const dimBtns = Array.from(
+  document.querySelectorAll<HTMLButtonElement>(".dim-btn")
+);
 
-const updateRandSize = () => {
-  randomSize = Number(randSizeInput.value);
-  randSizeVal.textContent = `${randomSize} × ${randomSize}`;
+const currentSize = () => (currentDim === 2 ? randomSize2d : randomSize3d);
+
+const renderRandSizeLabel = () => {
+  const n = currentSize();
+  randSizeVal.textContent =
+    currentDim === 2 ? `${n} × ${n}` : `${n} × ${n} × ${n}`;
 };
-randSizeInput.addEventListener("input", updateRandSize);
-updateRandSize();
+
+// Перенастраивает слайдер под выбранную размерность и обновляет подписи.
+const applyDimUI = () => {
+  const cfg = DIM_CFG[currentDim];
+  randSizeInput.min = String(cfg.min);
+  randSizeInput.max = String(cfg.max);
+  randSizeInput.step = String(cfg.step);
+  randSizeInput.value = String(currentSize());
+  randHint.textContent =
+    currentDim === 2
+      ? "Карта будет квадратом size × size клеток. Старт и финиш ставятся в противоположных углах."
+      : "Карта будет кубом size × size × size ячеек. A* ищет путь по 6 направлениям, старт и финиш — в противоположных углах.";
+  dimBtns.forEach((b) => {
+    const active = Number(b.dataset.dim) === currentDim;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-checked", String(active));
+  });
+  renderRandSizeLabel();
+};
+
+randSizeInput.addEventListener("input", () => {
+  const n = Number(randSizeInput.value);
+  if (currentDim === 2) randomSize2d = n;
+  else randomSize3d = n;
+  renderRandSizeLabel();
+});
+
+dimBtns.forEach((btn) =>
+  btn.addEventListener("click", () => {
+    currentDim = Number(btn.dataset.dim) === 3 ? 3 : 2;
+    applyDimUI();
+  })
+);
+applyDimUI();
+
+// Единая точка генерации: учитывает выбранную размерность.
+const generateMap = () => {
+  if (currentDim === 3) {
+    activate3D();
+    viewer!.generateRandom(0.28, randomSize3d);
+  } else {
+    deactivate3D();
+    editor.generateRandom(0.28, randomSize2d);
+  }
+};
+
+document
+  .querySelector<HTMLButtonElement>("#btn-random")!
+  .addEventListener("click", generateMap);
 
 const openRandModal = () => randModal.removeAttribute("hidden");
 const closeRandModal = () => randModal.setAttribute("hidden", "");
@@ -268,7 +345,7 @@ document
 document
   .querySelector<HTMLButtonElement>("#rand-apply")!
   .addEventListener("click", () => {
-    editor.generateRandom(0.28, randomSize);
+    generateMap();
     closeRandModal();
   });
 // Клик по затемнению вне карточки — закрыть.
@@ -278,6 +355,76 @@ randModal.addEventListener("click", (e) => {
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !randModal.hasAttribute("hidden")) closeRandModal();
 });
+
+// ---- 3D-режим ----
+const board3d = document.querySelector<HTMLDivElement>("#board-3d")!;
+const palette2d = document.querySelector<HTMLDivElement>("#palette")!;
+const coords2d = document.querySelector<HTMLDivElement>("#coords")!;
+let viewer: Grid3DViewer | null = null;
+
+const update3dSearchStatus = (s: Search3DState) => {
+  el.open.textContent = String(s.open);
+  el.closed.textContent = String(s.closed);
+  el.path.textContent = s.pathLength > 0 ? String(s.pathLength) : "—";
+  if (s.running) {
+    el.searchStatus.textContent = "Идёт поиск в 3D…";
+  } else if (s.finished && s.found) {
+    el.searchStatus.textContent = `Путь найден: ${s.pathLength} ячеек, просмотрено ${s.closed}.`;
+  } else if (s.finished && !s.found) {
+    el.searchStatus.textContent = "Путь не найден (финиш недостижим).";
+  } else {
+    el.searchStatus.textContent = "";
+  }
+};
+
+// Показывает 3D-вьювер поверх доски и (лениво) создаёт его.
+function activate3D() {
+  if (!viewer) {
+    viewer = new Grid3DViewer();
+    viewer.onSearch = update3dSearchStatus;
+    const host = board3d.querySelector<HTMLDivElement>(".panel-3d")!;
+    viewer.mount(board3d);
+    // canvas three.js кладём перед панелью, чтобы панель осталась поверх
+    board3d.insertBefore(board3d.lastChild!, host);
+    viewer.setSpeed(currentSpeed);
+  }
+  editor.clearSearch(false);
+  board3d.removeAttribute("hidden");
+  canvas.style.display = "none";
+  palette2d.style.display = "none";
+  coords2d.style.display = "none";
+  viewer.resize();
+}
+
+// Возвращает 2D-режим и освобождает ресурсы three.js.
+function deactivate3D() {
+  board3d.setAttribute("hidden", "");
+  canvas.style.display = "";
+  palette2d.style.display = "";
+  coords2d.style.display = "";
+  if (viewer) {
+    viewer.dispose();
+    viewer = null;
+  }
+}
+
+document
+  .querySelector<HTMLButtonElement>("#btn-3d-search")!
+  .addEventListener("click", () => {
+    const res = viewer?.startSearch();
+    if (res && !res.ok)
+      el.searchStatus.textContent = res.reason ?? "Не удалось запустить поиск";
+  });
+document
+  .querySelector<HTMLButtonElement>("#btn-3d-regen")!
+  .addEventListener("click", () => viewer?.generateRandom(0.28, randomSize3d));
+document
+  .querySelector<HTMLButtonElement>("#btn-3d-back")!
+  .addEventListener("click", () => {
+    currentDim = 2;
+    applyDimUI();
+    deactivate3D();
+  });
 
 document
   .querySelector<HTMLButtonElement>("#btn-reset-view")!
@@ -291,9 +438,12 @@ document
 const speedInput = document.querySelector<HTMLInputElement>("#speed")!;
 const speedVal = document.querySelector<HTMLSpanElement>("#speed-val")!;
 
+let currentSpeed = 50;
 const applySpeed = (idx: number) => {
   const v = SPEED_STEPS[idx] ?? 50;
+  currentSpeed = v;
   editor.setSpeed(v);
+  viewer?.setSpeed(v);
   speedVal.textContent = `${fmtSpeed(v)} в/с`;
 };
 speedInput.addEventListener("input", () =>
